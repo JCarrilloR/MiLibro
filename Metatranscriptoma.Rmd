@@ -1,4 +1,4 @@
-# Título del capítulo 1
+# Analisis metatranscriptomicos (RNA-seq)
 
 Descripción del capítulo
 
