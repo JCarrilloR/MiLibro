@@ -3,7 +3,36 @@
 Descripción del capítulo
 
 
-## Subtítulo nivel 1
+## Limpieza de secuencias
+# Raw paired-end RNA-seq reads were processed with Cutadapt (vX.X) to remove adapter contamination and low-quality bases. TruSeq Illumina adapter sequences were trimmed from both read ends, and poly-A tails of ≥10 nucleotides were clipped when present. Quality trimming was applied with a Phred threshold of 20 at both 5′ and 3′ ends, and reads shorter than 20 nucleotides after trimming were discarded. Filtering also removed reads containing ambiguous bases (N). Processing was performed in parallel across all samples, and per-sample reports were generated and subsequently summarized with MultiQC.
+
+# Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
+
+for R1 in *_R1_001.fastq.gz; do
+  S=${R1%_R1_001.fastq.gz}
+  R2="${S}_R2_001.fastq.gz"
+
+  cutadapt \
+    -j 8 \
+    -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
+    -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT \
+    -a A{10} -A A{10} \
+    -q 20,20 \
+    -m 20 \
+    --max-n 0 \
+    --overlap 5 \
+    -e 0.1 \
+    --trim-n \
+    --pair-filter=any \
+    --json "${S}.cutadapt.json" \
+    --report=minimal \
+    -o "${S}_R1.trimmed.fastq.gz" \
+    -p "${S}_R2.trimmed.fastq.gz" \
+    "$R1" "$R2"
+done
+
+multiqc .
+
 
 Contenido
 
