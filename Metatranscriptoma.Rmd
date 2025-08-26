@@ -8,35 +8,66 @@ Descripción del capítulo
 
 # Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
 
-```bash
+```
+#!/bin/zsh
 
-for R1 in *_R1_001.fastq.gz; do
-  S=${R1%_R1_001.fastq.gz}
-  R2="${S}_R2_001.fastq.gz"
+set -e                    # Salir si algún comando falla
+setopt NULL_GLOB         # En zsh: patrones sin match se expanden a “nada” (no quedan literales)
 
-  cutadapt \
-    -j 8 \
-    -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
-    -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT \
-    -a A{10} -A A{10} \
-    -q 20,20 \
-    -m 20 \
-    --max-n 0 \
-    --overlap 5 \
-    -e 0.1 \
-    --trim-n \
-    --pair-filter=any \
-    --json "${S}.cutadapt.json" \
-    --report=minimal \
-    -o "${S}_R1.trimmed.fastq.gz" \
-    -p "${S}_R2.trimmed.fastq.gz" \
-    "$R1" "$R2"
+outdir="cutadapt_results"
+mkdir -p "$outdir"
+
+# Construye la lista de archivos R1 válidos (acepta .fastq y .fastq.gz)
+typeset -a R1_FILES
+R1_FILES=( *_R1_001.fastq *_R1_001.fastq.gz )
+
+# Si no hay archivos que coincidan, termina con mensaje claro
+if (( ${#R1_FILES} == 0 )); then
+  echo "No se encontraron archivos que coincidan con *_R1_001.fastq(.gz) en el directorio actual."
+  exit 1
+fi
+
+# Recorre cada R1 y empareja su R2 correspondiente
+for R1 in $R1_FILES; do
+  if [[ "$R1" == *.fastq.gz ]]; then
+    base="${R1%_R1_001.fastq.gz}"          # nombre sin sufijo
+    R2="${base}_R2_001.fastq.gz"           # par esperado
+    ext=".fastq.gz"                        # extensión de salida
+  else
+    base="${R1%_R1_001.fastq}"
+    R2="${base}_R2_001.fastq"
+    ext=".fastq"
+  fi
+
+  # Verifica que exista el par R2
+  if [[ ! -f "$R2" ]]; then
+    echo "⚠️  No se encontró el par R2 para: $R1   (esperado: $R2). Se omite."
+    continue
+  fi
+
+  echo "Procesando: R1=$R1   R2=$R2"
+
+  # Ejecuta cutadapt en UNA sola línea (evita problemas al pegar en zsh)
+  cutadapt -j 8 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT -a A{10} -A A{10} -q 20,20 -m 20 --max-n 0 --overlap 5 -e 0.1 --trim-n --pair-filter=any --json "${outdir}/${base:t}.cutadapt.json" --report=minimal -o "${outdir}/${base:t}_R1.trimmed${ext}" -p "${outdir}/${base:t}_R2.trimmed${ext}" "$R1" "$R2"
 done
 
-multiqc .
+echo "Análisis completado. Resultados guardados en: ${outdir}/"
+
+Notas (línea por línea)
+
+#!/bin/zsh → fuerza a ejecutar con zsh (aunque tu shell por defecto sea otro).
+#set -e → si algo falla, el script se detiene (evitas resultados a medias).
+#setopt NULL_GLOB → en zsh, si el patrón no coincide, se expande a vacío (no deja literales como *_R1_001.fastq).
+#outdir="cutadapt_results" y mkdir -p "$outdir" → define y crea la carpeta de salida.
+#R1_FILES=( *_R1_001.fastq *_R1_001.fastq.gz ) → arma la lista de archivos R1 válidos, aceptando ambos formatos.
+#if (( ${#R1_FILES} == 0 )), fi es simplemente el cierre de una estructura if→ si la lista está vacía, termina con un mensaje claro.
+#Bloque if [[ "$R1" == *.fastq.gz ]] → detecta si la muestra es comprimida o no y ajusta sufijos/extensiones.
+#[[ ! -f "$R2" ]] → valida que el par R2 exista; si no, lo salta con aviso.
+#Comando cutadapt en una sola línea → evita que zsh interprete líneas sueltas como comandos (-a, -A, etc.).
+#"${base:t}" → en zsh, :t es el basename (quita ruta), por si ejecutas desde otra carpeta.
+#Mensaje final con la ruta de resultados.
 
 
-Contenido
 
 ### Subtítulo nivel 2
 
