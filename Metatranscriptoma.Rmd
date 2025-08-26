@@ -3,10 +3,12 @@
 Descripción del capítulo
 
 
+
+
 ## Limpieza de secuencias
 # Raw paired-end RNA-seq reads were processed with Cutadapt (vX.X) to remove adapter contamination and low-quality bases. TruSeq Illumina adapter sequences were trimmed from both read ends, and poly-A tails of ≥10 nucleotides were clipped when present. Quality trimming was applied with a Phred threshold of 20 at both 5′ and 3′ ends, and reads shorter than 20 nucleotides after trimming were discarded. Filtering also removed reads containing ambiguous bases (N). Processing was performed in parallel across all samples, and per-sample reports were generated and subsequently summarized with MultiQC.
 
-# Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
+## Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
 
 ```
 #!/bin/zsh
@@ -48,26 +50,116 @@ for R1 in $R1_FILES; do
   echo "Procesando: R1=$R1   R2=$R2"
 
   # Ejecuta cutadapt en UNA sola línea (evita problemas al pegar en zsh)
-  cutadapt -j 8 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT -a A{10} -A A{10} -q 20,20 -m 20 --max-n 0 --overlap 5 -e 0.1 --trim-n --pair-filter=any --json "${outdir}/${base:t}.cutadapt.json" --report=minimal -o "${outdir}/${base:t}_R1.trimmed${ext}" -p "${outdir}/${base:t}_R2.trimmed${ext}" "$R1" "$R2"
+  cutadapt -j 8 -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT -a A{10} -A A{10} -q 30,30 -m 20 --max-n 0 --overlap 5 -e 0.1 --trim-n --pair-filter=any --json "${outdir}/${base:t}.cutadapt.json" --report=minimal -o "${outdir}/${base:t}_R1.trimmed${ext}" -p "${outdir}/${base:t}_R2.trimmed${ext}" "$R1" "$R2"
 done
 
 echo "Análisis completado. Resultados guardados en: ${outdir}/"
 
-'''
 
-Notas (línea por línea)
+##Notas (línea por línea)
+##!/bin/zsh → fuerza a ejecutar con zsh (aunque tu shell por defecto sea otro).
+##set -e → si algo falla, el script se detiene (evitas resultados a medias).
+##setopt NULL_GLOB → en zsh, si el patrón no coincide, se expande a vacío (no deja literales como *_R1_001.fastq).
+##outdir="cutadapt_results" y mkdir -p "$outdir" → define y crea la carpeta de salida.
+##R1_FILES=( *_R1_001.fastq *_R1_001.fastq.gz ) → arma la lista de archivos R1 válidos, aceptando ambos formatos.
+##if (( ${#R1_FILES} == 0 )), fi es simplemente el cierre de una estructura if→ si la lista está vacía, termina con un mensaje claro.
+##Bloque if [[ "$R1" == *.fastq.gz ]] → detecta si la muestra es comprimida o no y ajusta sufijos/extensiones.
+##[[ ! -f "$R2" ]] → valida que el par R2 exista; si no, lo salta con aviso.
+##Comando cutadapt en una sola línea → evita que zsh interprete líneas sueltas como comandos (-a, -A, etc.).
+##"${base:t}" → en zsh, :t es el basename (quita ruta), por si ejecutas desde otra carpeta.
+##Mensaje final con la ruta de resultados.
+##El comando de Cutadapt se empleó para el recorte de adaptadores y la depuración de lecturas pareadas en formato FASTQ. Se ejecutó con 8 hilos en paralelo (-j 8) especificando las secuencias de adaptadores para las lecturas forward y reverse (-a y -A), así como la eliminación de colas poli-A de al menos diez nucleótidos. Se aplicó un filtrado de calidad en ambos extremos de las lecturas (-q 20,20), estableciendo una longitud mínima de 20 pb (-m 20), con un máximo de 0 nucleótidos ambiguos permitidos (--max-n 0). Para la detección de adaptadores, se definió un solapamiento mínimo de 5 pb (--overlap 5) y una tasa máxima de error de 0.1 (-e 0.1). Se activó además la opción de recortar nucleótidos ambiguos en los extremos (--trim-n) y de descartar un par si alguna de las lecturas no cumplía los criterios (--pair-filter=any). Los resultados se almacenaron en archivos FASTQ recortados para cada par de lecturas, junto con un reporte resumido en formato JSON que describe las estadísticas del proceso.
 
-#!/bin/zsh → fuerza a ejecutar con zsh (aunque tu shell por defecto sea otro).
-#set -e → si algo falla, el script se detiene (evitas resultados a medias).
-#setopt NULL_GLOB → en zsh, si el patrón no coincide, se expande a vacío (no deja literales como *_R1_001.fastq).
-#outdir="cutadapt_results" y mkdir -p "$outdir" → define y crea la carpeta de salida.
-#R1_FILES=( *_R1_001.fastq *_R1_001.fastq.gz ) → arma la lista de archivos R1 válidos, aceptando ambos formatos.
-#if (( ${#R1_FILES} == 0 )), fi es simplemente el cierre de una estructura if→ si la lista está vacía, termina con un mensaje claro.
-#Bloque if [[ "$R1" == *.fastq.gz ]] → detecta si la muestra es comprimida o no y ajusta sufijos/extensiones.
-#[[ ! -f "$R2" ]] → valida que el par R2 exista; si no, lo salta con aviso.
-#Comando cutadapt en una sola línea → evita que zsh interprete líneas sueltas como comandos (-a, -A, etc.).
-#"${base:t}" → en zsh, :t es el basename (quita ruta), por si ejecutas desde otra carpeta.
-#Mensaje final con la ruta de resultados.
+
+## Después del recorte de secuencias con Cutadapt, las lecturas obtenidas fueron evaluadas en términos de calidad mediante un flujo automatizado en zsh. El procedimiento consistió en localizar los archivos recortados en la carpeta cutadapt_results, sobre los cuales se ejecutó FastQC para generar reportes individuales con métricas como calidad por base, contenido GC, duplicación y longitudes de lectura. Posteriormente, los resultados de FastQC se integraron mediante MultiQC, obteniéndose un reporte consolidado en formato HTML y archivos tabulares que permiten la comparación global de todas las muestras en un solo documento.
+
+#!/bin/zsh
+
+set -e
+# Sale inmediatamente si algún comando falla (evita resultados a medias)
+
+setopt NULL_GLOB
+# En zsh, hace que los patrones que no coinciden no queden literales (se expanden a vacío)
+
+outdir="cutadapt_results"
+# Nombre de la carpeta donde quedaron los archivos recortados por cutadapt
+
+[[ -d "$outdir" ]] || { echo "No existe la carpeta '$outdir'. Corre primero el recorte con cutadapt."; exit 1; }
+# Verifica que exista la carpeta de resultados de cutadapt (si no, termina con mensaje claro)
+
+cd "$outdir"
+# Entra a la carpeta de resultados de cutadapt
+
+typeset -a TRIMMED
+TRIMMED=( *.trimmed.fastq *.trimmed.fastq.gz )
+# Construye la lista de archivos recortados a evaluar con FastQC (acepta .fastq y .fastq.gz)
+
+(( ${#TRIMMED} > 0 )) || { echo "No se encontraron archivos *.trimmed.fastq(.gz) en '$outdir'."; exit 1; }
+# Si no hay archivos recortados, termina con mensaje claro
+
+mkdir -p fastqc_results
+# Crea una subcarpeta para almacenar los reportes de FastQC
+
+fastqc -t 8 -o fastqc_results $TRIMMED
+# Ejecuta FastQC con 8 hilos, guardando todos los reportes dentro de fastqc_results
+
+cd fastqc_results
+# Entra a la subcarpeta con los reportes de FastQC
+
+multiqc . --outdir . --filename multiqc_trimmed_fastqc
+# Ejecuta MultiQC sobre los outputs de FastQC en esta carpeta; genera multiqc_trimmed_fastqc.html y multiqc_data/
+
+echo "Análisis completado. Revisa: $(pwd)/multiqc_trimmed_fastqc.html"
+# Mensaje final con la ruta completa del reporte consolidado
+
+
+## El procedimiento consistió en la integración de los reportes de MultiQC obtenidos antes (raw) y después (trimmed) del recorte de secuencias. Para ello, los archivos multiqc_general_stats.txt fueron procesados de manera que cada muestra quedara normalizada, eliminando sufijos técnicos como _001, _R1 o _R2. A cada registro se le añadió una columna denominada Tipo, que permitió distinguir entre datos crudos y recortados. Finalmente, ambos conjuntos se unificaron en un solo archivo tabular, lo que posibilita la comparación directa de las métricas de calidad de secuenciación entre etapas del flujo de análisis.
+
+
+#!/bin/zsh
+
+set -euo pipefail
+# -e: salir si algo falla; -u: error si usas variables no definidas; -o pipefail: propaga errores en pipes
+
+# Rutas de entrada (ajusta si tus nombres difieren)
+F_TRIM="cutadapt_results/fastqc_results/multiqc_trimmed_fastqc_data/multiqc_general_stats.txt"   # resumen de MultiQC post-trimming
+F_RAW="fastqc_raw/multiqc_general_stats.txt"                                                     # resumen de MultiQC de datos crudos
+OUT="comparativo_general_stats.txt"    
+
+[[ -f "$F_TRIM" ]] || { echo "No se encuentra: $F_TRIM"; exit 1; }
+[[ -f "$F_RAW"  ]] || { echo "No se encuentra: $F_RAW";  exit 1; }
+
+# Función awk para procesar cada archivo en formato largo
+process_file() {
+  local file=$1
+  local tipo=$2
+  awk -v TIPO="$tipo" -F'\t' 'NR==1 {
+      # Encabezado: solo se imprime una vez
+      if (!printed++) {
+        printf "Sample\tTipo"
+        for (i=2;i<=NF;i++) printf "\t%s", $i
+        printf "\n"
+      }
+      next
+    }
+    {
+      # Normaliza nombre de muestra:
+      sample=$1
+      sub(/_001$/, "", sample)     # quita sufijo _001
+      sub(/_R[12]$/, "", sample)   # opcional: elimina _R1/_R2 si quieres agrupar sin distinción de par
+      printf "%s\t%s", sample, TIPO
+      for (i=2;i<=NF;i++) printf "\t%s", $i
+      printf "\n"
+    }' "$file"
+}
+
+# Procesa ambos archivos y combina
+process_file "$F_TRIM" "trimmed" > "$OUT"
+process_file "$F_RAW"  "raw"     >> "$OUT"
+
+echo "✅ Archivo unificado generado: $PWD/$OUT"
+
+
 
 
 
