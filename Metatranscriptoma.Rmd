@@ -53,6 +53,8 @@ done
 
 echo "Análisis completado. Resultados guardados en: ${outdir}/"
 
+'''
+
 Notas (línea por línea)
 
 #!/bin/zsh → fuerza a ejecutar con zsh (aunque tu shell por defecto sea otro).
