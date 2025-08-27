@@ -2,7 +2,68 @@
 
 Descripción del capítulo
 
+## Descragando secuencias crudas de un bioproject. Para recuperar las secuencias crudas asociadas al BioProject PRJNA935796, se utilizó el paquete EDirect en combinación con el SRA Toolkit. En primer lugar, se consultó la base de datos SRA mediante el comando esearch, recuperando la tabla de metadatos en formato runinfo con efetch, la cual fue almacenada en un archivo (runinfo.csv). A partir de este archivo se extrajo la columna Run, que contiene los identificadores únicos de cada corrida de secuenciación (SRR), generando así una lista (SRR_list.txt). Finalmente, cada uno de los accesos SRR fue descargado de manera iterativa mediante el comando fasterq-dump, utilizando ocho hilos en paralelo (-e 8) y guardando las lecturas crudas en la carpeta raw_sequences.
 
+# Obtener lista de SRR
+esearch -db sra -query PRJNA935796 | efetch -format runinfo > runinfo.csv
+
+# Extraer la columna "Run" (SRR IDs)
+cut -d',' -f1 runinfo.csv | grep SRR > SRR_list.txt
+
+# Descargar todas las muestras
+for srr in $(cat SRR_list.txt); do
+  fasterq-dump $srr -O ./raw_sequences -e 12
+done
+
+
+
+
+## Analisis de calidad inicial. Se realizó un análisis de control de calidad con FastQC sobre todas las lecturas crudas en formato FASTQ, considerando archivos comprimidos y no comprimidos correspondientes a lecturas forward y reverse. Los reportes se generaron en paralelo utilizando ocho hilos de procesamiento y se almacenaron en la carpeta fastqc_raw, que contiene tanto los archivos HTML para la inspección visual de la calidad como los archivos comprimidos con los datos numéricos de cada muestra.
+
+gunzip *.gz
+
+#!/bin/zsh
+
+set -e                    # Detener el script si ocurre un error
+setopt NULL_GLOB          # Si no hay coincidencias, los patrones se expanden a vacío
+
+outdir="fastqc_raw"       # Carpeta de salida para los resultados
+mkdir -p "$outdir"        # Crear la carpeta si no existe
+
+# Buscar archivos FASTQ crudos (acepta .fastq y .fastq.gz)
+typeset -a RAW_FILES
+RAW_FILES=( *_R1_001.fastq *_R2_001.fastq *_R1_001.fastq.gz *_R2_001.fastq.gz )
+
+# Verificar que existan archivos
+(( ${#RAW_FILES} > 0 )) || { echo "No se encontraron archivos FASTQ crudos en el directorio actual."; exit 1; }
+
+# Ejecutar FastQC con 8 hilos sobre todos los archivos encontrados
+fastqc -t 8 -o "$outdir" $RAW_FILES
+
+echo "✅ Análisis de FastQC completado. Resultados guardados en: $PWD/$outdir"
+
+
+##Se integraron los reportes individuales de FastQC correspondientes a las lecturas crudas mediante MultiQC, generando un informe consolidado en formato HTML con las principales métricas de calidad. Asimismo, el archivo tabular multiqc_general_stats.txt, que resume los valores numéricos de todas las muestras, fue copiado al directorio raíz del proyecto para facilitar su comparación y análisis posterior.
+
+#!/bin/zsh
+
+set -euo pipefail
+# -e: salir si ocurre error
+# -u: error si se usa variable no definida
+# -o pipefail: propaga errores en pipelines
+
+indir="fastqc_raw"       # Carpeta donde están los resultados de FastQC
+outdir="fastqc_raw/multiqc_data"  # Carpeta donde MultiQC guardará resultados
+mkdir -p "$indir"        # Crea la carpeta de entrada si no existe (por seguridad)
+
+# Verifica que existan reportes de FastQC
+ls "$indir"/*fastqc.zip >/dev/null 2>&1 || { echo "⚠️ No se encontraron resultados de FastQC en $indir"; exit 1; }
+
+# Ejecuta MultiQC sobre fastqc_raw
+multiqc "$indir" --outdir "$indir" --filename multiqc_fastqc_raw
+
+# Copia el archivo de estadísticas generales al directorio raíz
+cp fastqc_raw/multiqc_fastqc_raw_data/multiqc_general_stats.txt ./multiqc_general_stats.txt
 
 
 ## Limpieza de secuencias
@@ -160,7 +221,12 @@ process_file "$F_RAW"  "raw"     >> "$OUT"
 echo "✅ Archivo unificado generado: $PWD/$OUT"
 
 
+##Las lecturas filtradas fueron procesadas con SortMeRNA para la identificación y eliminación de secuencias de ARN ribosomal (rRNA). El análisis se realizó utilizando las bases de datos de referencia provistas por la herramienta (SILVA y Rfam), clasificando las lecturas en dos conjuntos: rRNA y no rRNA. Las lecturas no ribosomales se conservaron para los análisis posteriores de expresión y anotación funcional, con el fin de reducir la sobre-representación de rRNA en las bibliotecas y mejorar la calidad de la información transcriptómica.
 
+##Trimmed reads were processed with SortMeRNA to identify and remove ribosomal RNA (rRNA) sequences. The analysis was performed using the reference databases provided by the software (SILVA and Rfam), classifying reads into two groups: rRNA and non-rRNA. Non-ribosomal reads were retained for downstream expression and functional annotation analyses, in order to reduce rRNA overrepresentation in the libraries and improve transcriptomic data quality.
+
+
+###En mi caso se instalo micromamba como ambiente y se instalo SortMeRNA
 
 
 ### Subtítulo nivel 2
