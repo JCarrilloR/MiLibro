@@ -226,7 +226,157 @@ echo "✅ Archivo unificado generado: $PWD/$OUT"
 ##Trimmed reads were processed with SortMeRNA to identify and remove ribosomal RNA (rRNA) sequences. The analysis was performed using the reference databases provided by the software (SILVA and Rfam), classifying reads into two groups: rRNA and non-rRNA. Non-ribosomal reads were retained for downstream expression and functional annotation analyses, in order to reduce rRNA overrepresentation in the libraries and improve transcriptomic data quality.
 
 
-###En mi caso se instalo micromamba como ambiente y se instalo SortMeRNA
+##El siguiente paso se realiza en un ambiente instalado en conda llamado bio. 
+
+conda activate bio
+
+#!/bin/zsh
+
+set -e
+setopt NULL_GLOB
+
+# ============================
+# CONFIGURACIÓN (EDITA AQUÍ)
+# ============================
+
+# Carpeta con FASTQ ya recortados por cutadapt
+IN_DIR="cutadapt_results"
+
+# Carpeta de salida de SortMeRNA
+OUT_ROOT="sortmerna_results"
+
+# Hilos de CPU a usar
+THREADS=8
+
+# Bases de rRNA (FASTA) y prefijos de índice.
+# Pon aquí las rutas a tus referencias. Puedes usar 1 o varias --ref.
+# Ejemplos (reemplaza por tus rutas reales):
+DB_DIR="/path/a/tus_bases_rrna"
+REFS=(
+  "$DB_DIR/silva-bac-16s-id90.fasta"    "idx_silva_bac16s"
+  "$DB_DIR/silva-arc-16s-id95.fasta"    "idx_silva_arc16s"
+  "$DB_DIR/silva-euk-18s-id95.fasta"    "idx_silva_euk18s"
+  "$DB_DIR/silva-bac-23s-id98.fasta"    "idx_silva_bac23s"
+)
+
+# Carpeta donde guardaremos los índices (se crean una sola vez)
+IDX_DIR="sortmerna_db"
+
+# ============================
+# PREPARAR ÍNDICES (si no existen)
+# ============================
+
+mkdir -p "$IDX_DIR" "$OUT_ROOT"
+
+# Construye el arreglo de parámetros --ref para sortmerna
+# y detecta si los índices existen (archivos .kvdb). Si faltan, los crea.
+REF_ARGS=()
+NEED_BUILD=0
+
+# Cada referencia son pares: FASTA + prefijo_idx
+for ((i=1; i<=${#REFS[@]}; i+=2)); do
+  fasta="${REFS[i]}"
+  pref="${REFS[i+1]}"
+
+  # Ruta completa al prefijo de índice dentro de IDX_DIR
+  idx_prefix="$IDX_DIR/$pref"
+  REF_ARGS+=( --ref "$fasta,$idx_prefix" )
+
+  # Heurística: si no hay carpeta kvdb para este índice, marcamos que hay que construir
+  if [[ ! -d "${idx_prefix}.kvdb" ]]; then
+    NEED_BUILD=1
+  fi
+done
+
+if (( NEED_BUILD )); then
+  echo "📦 Construyendo índices de SortMeRNA en: $IDX_DIR"
+  # sortmerna construye índices al primer uso automáticamente; lanzar un build rápido:
+  # Usamos --idx-dir (si tu versión lo soporta) o dejamos que tome los prefijos dados.
+  # Aquí hacemos un 'touch' forzado ejecutando contra una mini-entrada vacía si quieres
+  # pero normalmente con la primera muestra se crean. Mostramos aviso:
+  echo "ℹ️ Los índices se generarán automáticamente al correr la primera muestra."
+fi
+
+# ============================
+# BUSCAR FASTQ recortados
+# Acepta .fastq y .fastq.gz en pares *_R1.trimmed* / *_R2.trimmed*
+# ============================
+
+R1_LIST=( "$IN_DIR"/*_R1.trimmed.fastq(.N) "$IN_DIR"/*_R1.trimmed.fastq.gz(.N) )
+if (( ${#R1_LIST} == 0 )); then
+  echo "❌ No se encontraron archivos R1 recortados en $IN_DIR (patrones *_R1.trimmed.fastq(.gz))."
+  exit 1
+fi
+
+# ============================
+# PROCESAR MUESTRAS PAREADAS
+# ============================
+
+for R1 in "${R1_LIST[@]}"; do
+  # Derivar R2 y sample base
+  if [[ "$R1" == *.gz ]]; then
+    base="${R1%_R1.trimmed.fastq.gz}"
+    R2="${base}_R2.trimmed.fastq.gz"
+    EXT=".fastq.gz"
+  else
+    base="${R1%_R1.trimmed.fastq}"
+    R2="${base}_R2.trimmed.fastq"
+    EXT=".fastq"
+  fi
+
+  sample="${base##*/}"   # basename sin ruta
+  OUT_DIR="$OUT_ROOT/$sample"
+  mkdir -p "$OUT_DIR"
+
+  if [[ ! -f "$R2" ]]; then
+    echo "⚠️ No se encontró el par R2 para $R1 (esperado: $R2). Se omite."
+    continue
+  fi
+
+  echo "▶️  Procesando muestra: $sample"
+  echo "    R1: $R1"
+  echo "    R2: $R2"
+  echo "    Salida: $OUT_DIR"
+
+  # Salidas deseadas:
+  #  - Lecturas rRNA (aligned) y no-rRNA (other), separadas por par
+  #  - Log con estadísticas
+  ALIGNED_BASE="$OUT_DIR/${sample}.rRNA"
+  OTHER_BASE="$OUT_DIR/${sample}.non_rRNA"
+  LOGFILE="$OUT_DIR/${sample}.sortmerna.log"
+
+  # sortmerna (modo paired)
+  # Notas:
+  #  --paired_in      : indica que reads están en archivos separados R1/R2
+  #  --fastx          : produce FASTQ/FASTA de salida (no solo accesiones)
+  #  --aligned/--other: prefijos de archivo de salida; para paired, SortMeRNA
+  #                     suele generar sufijos _fwd/_rev. Revisa tu versión.
+  #  --workdir        : carpeta de trabajo (temporal + resultados auxiliares)
+  #  --threads        : hilos
+  #
+  # Si tu versión no añade _fwd/_rev automáticamente, quedarán archivos únicos (interleaved).
+  # Ajusta nombres si lo deseas.
+
+  sortmerna \
+    "${REF_ARGS[@]}" \
+    --reads "$R1" \
+    --reads "$R2" \
+    --paired_in \
+    --fastx \
+    --aligned "$ALIGNED_BASE" \
+    --other   "$OTHER_BASE" \
+    --workdir "$OUT_DIR" \
+    --threads "$THREADS" \
+    &> "$LOGFILE"
+
+  echo "✅ Terminado: $sample"
+  echo "   rRNA:     ${ALIGNED_BASE}*"
+  echo "   no-rRNA:  ${OTHER_BASE}*"
+  echo "   log:      $LOGFILE"
+done
+
+echo "🎉 Proceso completo. Resultados en: $OUT_ROOT"
+
 
 
 ### Subtítulo nivel 2
