@@ -1,0 +1,12 @@
+# Instalación y ejecución de Picrust2
+
+Descripción del capítulo
+
+
+## Instalación en Mac (procesador intel)
+
+Contenido
+
+### Subtítulo nivel 2
+
+Contenido
