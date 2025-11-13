@@ -15,15 +15,19 @@ bash Miniconda3-latest-MacOSX-x86_64.sh
 
 conda --version
 
-conda create -n picrust2 python=3.8 -y
+Descargar el picrust2-env.yaml oficial
+
+cd ~
+curl -L -o picrust2-env.yaml \
+  https://raw.githubusercontent.com/picrust/picrust2/master/picrust2-env.yaml
+
+conda env create -f picrust2-env.yaml -n picrust2
+
 
 conda activate picrust2
 
-conda config --add channels defaults
-conda config --add channels bioconda
-conda config --add channels conda-forge
 
-conda install -c bioconda picrust2 -y
+
 
 ´´´
 
@@ -42,7 +46,8 @@ picrust2_pipeline.py \
   -s ASVs.fa \
   -i ASVs_counts.tsv \
   -o picrust2_results \
-  -p 4
+  --threads 4
+
 
 #### picrust2_pipeline.py
 Es el pipeline principal de PICRUSt2, un flujo completo que:
