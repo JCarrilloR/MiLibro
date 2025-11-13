@@ -84,6 +84,74 @@ Mac con 8 núcleos → -p 8
 Servidores → usar tantos como tengas disponibles
 
 
-### Subtítulo nivel 2
+### Resultados generados por PICRUSt2
+PICRUSt2 produce un conjunto de archivos y carpetas que contienen las predicciones funcionales derivadas de datos taxonómicos (ASVs/OTUs), su colocación filogenética y la inferencia de rutas metabólicas. Estos resultados se organizan principalmente en el directorio especificado con -o.
+A continuación se describen los componentes más importantes del análisis.
+
+🔹 1. Archivo del árbol filogenético
+out.tre
+Contiene la colocación de las ASVs dentro del árbol de referencia de PICRUSt2 (basado en genes marcadores 16S).
+Generado mediante EPA-NG y GAPPA, que posicionan las nuevas secuencias en un árbol fijo.
+Es esencial para la predicción funcional basada en ancestría filogenética.
+
+🔹 2. Valores de NSTI (Nearest Sequenced Taxon Index)
+marker_predicted_and_nsti.tsv.gz
+Proporciona para cada ASV el valor NSTI, un indicador de la confiabilidad de las predicciones:
+Valores bajos → alta cercanía a genomas secuenciados → predicciones más confiables.
+Valores altos → ASVs divergentes → menor precisión potencial.
+Incluye la abundancia predicha del marcador genético (16S).
+
+🔹 3. Predicciones funcionales por genes (KO y EC)
+📁 a) KO (KEGG Orthologs)
+Carpeta: KO_metagenome_out/
+Archivos principales:
+pred_metagenome_unstrat.tsv.gz
+Tabla de abundancia predicha de genes KO por muestra no estratificada.
+Filas = genes KO
+Columnas = muestras
+pred_metagenome_strat.tsv.gz
+Tabla estratificada, donde cada fila representa
+KO + ASV que lo aporta.
+Útil para identificar cuáles ASVs contribuyen a cada función.
+📁 b) EC (Enzyme Commission numbers)
+Carpeta: EC_metagenome_out/
+Analogía a KO:
+pred_metagenome_unstrat.tsv.gz
+→ Abundancias totales de enzimas EC por muestra.
+pred_metagenome_strat.tsv.gz
+→ Aportación de cada ASV a cada función EC.
+Las matrices EC son una forma complementaria a KO para evaluar funciones.
+
+🔹 4. Predicción de rutas metabólicas (MetaCyc)
+📁 pathways_out/
+Esta carpeta contiene la inferencia de rutas metabólicas completas basada en la combinación de funciones KO/EC.
+Archivos importantes:
+path_abun_unstrat.tsv.gz
+→ Abundancia total de cada ruta metabólica.
+Ejemplo de rutas: biosíntesis de aminoácidos, degradación de xilosa, fermentación butírica.
+path_abun_strat.tsv.gz
+→ Ruta + ASV contribuyente (estratificado).
+path_abun_unstrat_descriptions.tsv
+→ Tabla con descripciones humanas de cada metapathway (nombre completo).
+pathway_map.tsv
+→ Mapa entre KOs/ECs y rutas MetaCyc.
+
+🔹 5. Alineamientos intermedios y diagnósticos
+intermediate/
+Contiene archivos generados durante el proceso:
+Alineamientos HMMER
+Colocación intermediaria de EPA-NG
+Tablas transformadas
+Resultados preliminares de los modelos de predicción
+Aunque no suelen emplearse directamente en análisis, son útiles para depuración o auditoría del pipeline.
+
+🔹 6. Bitácora del análisis
+pipeline_log.txt
+Incluye:
+Todos los comandos ejecutados
+Tiempos de procesamiento
+Mensajes de advertencia
+Versión del software
+Es esencial para documentación y reproducibilidad.
 
 Contenido
