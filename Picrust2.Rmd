@@ -46,7 +46,7 @@ picrust2_pipeline.py \
   -s ASVs.fa \
   -i ASVs_counts.tsv \
   -o picrust2_results \
-  --threads 4
+  - p 4
 
 
 #### picrust2_pipeline.py
@@ -158,5 +158,35 @@ Tiempos de procesamiento
 Mensajes de advertencia
 Versión del software
 Es esencial para documentación y reproducibilidad.
+
+### Warnings de resultados. Normalmente resulta en estos warnings, el significado es el siguiente
+
+Warning: There was only one file for the function: EC
+Maybe that's fine if you used custom traits or there were no sequences matching one of the domains.
+Warning: There was only one file for the function: KO
+Maybe that's fine if you used custom traits or there were no sequences matching one of the domains.
+All ASVs were below the max NSTI cut-off of 2.0 and so all were retained for downstream analyses.
+
+All ASVs were below the max NSTI cut-off of 2.0 and so all were retained for downstream analyses.
+
+
+🔹 1) “There was only one file for the function: EC / KO”
+PICRUSt2 normalmente puede combinar resultados de dos dominios:
+Bacterias
+Arqueas
+Cuando el script intenta juntar ambos y solo encuentra uno de los dos, te saca ese warning:
+En la práctica significa:
+👉 “Solo hubo predicciones para un dominio (por ejemplo, solo bacterias)”.
+Esto es muy común si:
+Tus ASVs son sobre todo bacterianas (16S típico)
+O si la base de referencia arqueal no tuvo matches
+
+🔹 2) “All ASVs were below the max NSTI cut-off of 2.0…”
+Este mensaje es muy bueno:
+PICRUSt2 calcula para cada ASV un valor NSTI (Nearest Sequenced Taxon Index).
+Cuanto más bajo, más “cerca” está tu ASV de un genoma de referencia secuenciado.
+El pipeline descarta ASVs con NSTI muy alto (por default > 2.0).
+
+
 
 Contenido
