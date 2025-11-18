@@ -39,8 +39,10 @@ conda activate picrust2
 picrust2_pipeline.py -h
 
 
-### Corriendo primer ejemplo. Archivos de entrada ASVs_counts.tsv (se agrega "OTU" en primer linea, separado por un tabulador) y archivo ASVs.fa
+### Corriendo primer ejemplo. Archivos de entrada ASVs_counts.tsv (se agrega "OTU" en primer linea, separado por un tabulador) y archivo ASVs.fa. El current directory debe ser donde están los arhivos .fa y .tsv
 
+
+cd picrust2_test/  
 
 picrust2_pipeline.py \
   -s ASVs.fa \
