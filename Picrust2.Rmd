@@ -48,7 +48,7 @@ picrust2_pipeline.py \
   -s ASVs.fa \
   -i ASVs_counts.tsv \
   -o picrust2_results \
-  - p 4
+  -p 4
 
 
 #### picrust2_pipeline.py
