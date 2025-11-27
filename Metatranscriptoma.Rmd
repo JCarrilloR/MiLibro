@@ -43,33 +43,44 @@ fastqc -t 8 -o "$outdir" $RAW_FILES
 echo "✅ Análisis de FastQC completado. Resultados guardados en: $PWD/$outdir"
 
 
-##Se integraron los reportes individuales de FastQC correspondientes a las lecturas crudas mediante MultiQC, generando un informe consolidado en formato HTML con las principales métricas de calidad. Asimismo, el archivo tabular multiqc_general_stats.txt, que resume los valores numéricos de todas las muestras, fue copiado al directorio raíz del proyecto para facilitar su comparación y análisis posterior.
+#Se integraron los reportes individuales de FastQC correspondientes a las lecturas crudas mediante MultiQC, generando un informe consolidado en formato HTML con las principales métricas de calidad. Asimismo, el archivo tabular multiqc_general_stats.txt, que resume los valores numéricos de todas las muestras, fue copiado al directorio raíz del proyecto para facilitar su comparación y análisis posterior.
+
+
+desde aqui version 2
+
 
 #!/bin/zsh
 
-set -euo pipefail
-# -e: salir si ocurre error
-# -u: error si se usa variable no definida
-# -o pipefail: propaga errores en pipelines
+# Script para integrar reportes FASTQC con MultiQC
+# Genera un HTML consolidado y copia multiqc_general_stats.txt al directorio raíz
 
-indir="fastqc_raw"       # Carpeta donde están los resultados de FastQC
-outdir="fastqc_raw/multiqc_data"  # Carpeta donde MultiQC guardará resultados
-mkdir -p "$indir"        # Crea la carpeta de entrada si no existe (por seguridad)
+set -euo pipefail  # -e: salir si hay error; -u: error en variables no definidas; -o pipefail: propaga errores en pipelines
 
-# Verifica que existan reportes de FastQC
-ls "$indir"/*fastqc.zip >/dev/null 2>&1 || { echo "⚠️ No se encontraron resultados de FastQC en $indir"; exit 1; }
+indir="fastqc_raw"                  # Carpeta donde están los resultados de FastQC
+outdir="fastqc_raw/multiqc_data"    # Carpeta donde MultiQC guardará resultados
+
+# Crea la carpeta de salida si no existe
+mkdir -p "$outdir"
+
+# Verifica que existan reportes de FastQC (*.zip)
+ls "$indir"/*fastqc.zip >/dev/null 2>&1 || { 
+  echo "⚠️  No se encontraron resultados de FastQC en $indir (no hay *fastqc.zip)"; 
+  exit 1; 
+}
 
 # Ejecuta MultiQC sobre fastqc_raw
-multiqc "$indir" --outdir "$indir" --filename multiqc_fastqc_raw
+multiqc "$indir" \
+  --outdir "$outdir" \
+  --filename multiqc_fastqc_raw
 
 # Copia el archivo de estadísticas generales al directorio raíz
-cp fastqc_raw/multiqc_fastqc_raw_data/multiqc_general_stats.txt ./multiqc_general_stats.txt
+cp "$outdir"/multiqc_fastqc_raw_data/multiqc_general_stats.txt ./multiqc_general_stats.txt
 
 
-## Limpieza de secuencias
+# Limpieza de secuencias
 # Raw paired-end RNA-seq reads were processed with Cutadapt (vX.X) to remove adapter contamination and low-quality bases. TruSeq Illumina adapter sequences were trimmed from both read ends, and poly-A tails of ≥10 nucleotides were clipped when present. Quality trimming was applied with a Phred threshold of 20 at both 5′ and 3′ ends, and reads shorter than 20 nucleotides after trimming were discarded. Filtering also removed reads containing ambiguous bases (N). Processing was performed in parallel across all samples, and per-sample reports were generated and subsequently summarized with MultiQC.
 
-## Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
+# Las lecturas crudas pareadas de RNA-seq se procesaron con Cutadapt (vX.X) para eliminar la contaminación por adaptadores y las bases de baja calidad. Las secuencias de adaptadores TruSeq de Illumina se recortaron en ambos extremos de las lecturas y, cuando estuvieron presentes, se eliminaron colas poli-A de ≥10 nucleótidos. Se aplicó un recorte por calidad con un umbral Phred de 20 en los extremos 5′ y 3′, y las lecturas con una longitud final menor a 20 nucleótidos se descartaron. Asimismo, se filtraron las lecturas que contenían bases ambiguas (N). El procesamiento se realizó en paralelo para todas las muestras y se generaron reportes individuales, que posteriormente fueron resumidos con MultiQC.
 
 
 #!/bin/zsh
@@ -176,21 +187,36 @@ echo "Análisis completado. Revisa: $(pwd)/multiqc_trimmed_fastqc.html"
 
 ## El procedimiento consistió en la integración de los reportes de MultiQC obtenidos antes (raw) y después (trimmed) del recorte de secuencias. Para ello, los archivos multiqc_general_stats.txt fueron procesados de manera que cada muestra quedara normalizada, eliminando sufijos técnicos como _001, _R1 o _R2. A cada registro se le añadió una columna denominada Tipo, que permitió distinguir entre datos crudos y recortados. Finalmente, ambos conjuntos se unificaron en un solo archivo tabular, lo que posibilita la comparación directa de las métricas de calidad de secuenciación entre etapas del flujo de análisis.
 
+cd .. #volver a root
 
 #!/bin/zsh
 
 set -euo pipefail
 # -e: salir si algo falla; -u: error si usas variables no definidas; -o pipefail: propaga errores en pipes
 
-# Rutas de entrada (ajusta si tus nombres difieren)
-F_TRIM="cutadapt_results/fastqc_results/multiqc_trimmed_fastqc_data/multiqc_general_stats.txt"   # resumen de MultiQC post-trimming
-F_RAW="fastqc_raw/multiqc_general_stats.txt"                                                     # resumen de MultiQC de datos crudos
-OUT="comparativo_general_stats.txt"    
+# ========= RUTAS DE ENTRADA ==========
 
+# Archivo de MultiQC post-trimming (ya confirmado)
+F_TRIM="cutadapt_results/fastqc_results/multiqc_trimmed_fastqc_data/multiqc_general_stats.txt"
+
+# Buscar automáticamente el multiqc_general_stats.txt de los datos crudos dentro de fastqc_raw
+RAW_STATS=$(find fastqc_raw -maxdepth 5 -type f -name "multiqc_general_stats.txt" | head -n 1)
+
+if [[ -z "$RAW_STATS" ]]; then
+  echo "❌ No se encontró ningún multiqc_general_stats.txt dentro de fastqc_raw"
+  exit 1
+fi
+
+F_RAW="$RAW_STATS"
+
+OUT="comparativo_general_stats.txt"
+
+# Verificación de existencia
 [[ -f "$F_TRIM" ]] || { echo "No se encuentra: $F_TRIM"; exit 1; }
 [[ -f "$F_RAW"  ]] || { echo "No se encuentra: $F_RAW";  exit 1; }
 
-# Función awk para procesar cada archivo en formato largo
+# ========= FUNCIÓN PARA PROCESAR CADA ARCHIVO ==========
+
 process_file() {
   local file=$1
   local tipo=$2
@@ -204,17 +230,21 @@ process_file() {
       next
     }
     {
-      # Normaliza nombre de muestra:
+      # Normaliza nombre de muestra
       sample=$1
-      sub(/_001$/, "", sample)     # quita sufijo _001
-      sub(/_R[12]$/, "", sample)   # opcional: elimina _R1/_R2 si quieres agrupar sin distinción de par
+      sub(/_001$/, "", sample)
+      sub(/_R[12]$/, "", sample)
       printf "%s\t%s", sample, TIPO
       for (i=2;i<=NF;i++) printf "\t%s", $i
       printf "\n"
     }' "$file"
 }
 
-# Procesa ambos archivos y combina
+# ========= EJECUCIÓN ==========
+
+echo "Usando archivo trimmed: $F_TRIM"
+echo "Usando archivo raw:     $F_RAW"
+
 process_file "$F_TRIM" "trimmed" > "$OUT"
 process_file "$F_RAW"  "raw"     >> "$OUT"
 
@@ -226,9 +256,14 @@ echo "✅ Archivo unificado generado: $PWD/$OUT"
 ##Trimmed reads were processed with SortMeRNA to identify and remove ribosomal RNA (rRNA) sequences. The analysis was performed using the reference databases provided by the software (SILVA and Rfam), classifying reads into two groups: rRNA and non-rRNA. Non-ribosomal reads were retained for downstream expression and functional annotation analyses, in order to reduce rRNA overrepresentation in the libraries and improve transcriptomic data quality.
 
 
-##El siguiente paso se realiza en un ambiente instalado en conda llamado bio. 
+#El siguiente paso se realiza en un ambiente instalado en conda llamado bio. Revisa instalación de sortmeRNA, regista version (4.3.7)
 
 conda activate bio
+
+sortmerna --version 
+
+#Las bases de referencia de sortMeRNA deben estar disponibles, en esta caso "/Users/bio2/sortmerna_db"
+
 
 #!/bin/zsh
 
@@ -236,146 +271,170 @@ set -e
 setopt NULL_GLOB
 
 # ============================
-# CONFIGURACIÓN (EDITA AQUÍ)
+# CONFIGURACIÓN (EDITA SOLO RUTAS DE FASTQ SI CAMBIAN)
 # ============================
 
-# Carpeta con FASTQ ya recortados por cutadapt
+# FASTQ recortados por cutadapt
 IN_DIR="cutadapt_results"
 
-# Carpeta de salida de SortMeRNA
+# Carpeta de salida
 OUT_ROOT="sortmerna_results"
 
-# Hilos de CPU a usar
-THREADS=8
+# Hilos de CPU
+THREADS=12
 
-# Bases de rRNA (FASTA) y prefijos de índice.
-# Pon aquí las rutas a tus referencias. Puedes usar 1 o varias --ref.
-# Ejemplos (reemplaza por tus rutas reales):
-DB_DIR="/path/a/tus_bases_rrna"
-REFS=(
-  "$DB_DIR/silva-bac-16s-id90.fasta"    "idx_silva_bac16s"
-  "$DB_DIR/silva-arc-16s-id95.fasta"    "idx_silva_arc16s"
-  "$DB_DIR/silva-euk-18s-id95.fasta"    "idx_silva_euk18s"
-  "$DB_DIR/silva-bac-23s-id98.fasta"    "idx_silva_bac23s"
+# === Rutas ACTUALIZADAS para las bases ===
+
+DB_DIR="/Users/bio2/sortmerna_db/rRNA_databases"
+IDX_DIR="/Users/bio2/sortmerna_db/index"
+
+mkdir -p "$IDX_DIR"
+
+REF_ARGS=(
+  --ref "$DB_DIR/silva-bac-16s-id90.fasta"
+  --ref "$DB_DIR/silva-arc-16s-id95.fasta"
+  --ref "$DB_DIR/silva-euk-18s-id95.fasta"
+  --ref "$DB_DIR/silva-bac-23s-id98.fasta"
 )
 
-# Carpeta donde guardaremos los índices (se crean una sola vez)
-IDX_DIR="sortmerna_db"
+# Crear carpetas si no existen
+mkdir -p "$OUT_ROOT" "$IDX_DIR"
 
 # ============================
-# PREPARAR ÍNDICES (si no existen)
-# ============================
-
-mkdir -p "$IDX_DIR" "$OUT_ROOT"
-
-# Construye el arreglo de parámetros --ref para sortmerna
-# y detecta si los índices existen (archivos .kvdb). Si faltan, los crea.
-REF_ARGS=()
-NEED_BUILD=0
-
-# Cada referencia son pares: FASTA + prefijo_idx
-for ((i=1; i<=${#REFS[@]}; i+=2)); do
-  fasta="${REFS[i]}"
-  pref="${REFS[i+1]}"
-
-  # Ruta completa al prefijo de índice dentro de IDX_DIR
-  idx_prefix="$IDX_DIR/$pref"
-  REF_ARGS+=( --ref "$fasta,$idx_prefix" )
-
-  # Heurística: si no hay carpeta kvdb para este índice, marcamos que hay que construir
-  if [[ ! -d "${idx_prefix}.kvdb" ]]; then
-    NEED_BUILD=1
-  fi
-done
-
-if (( NEED_BUILD )); then
-  echo "📦 Construyendo índices de SortMeRNA en: $IDX_DIR"
-  # sortmerna construye índices al primer uso automáticamente; lanzar un build rápido:
-  # Usamos --idx-dir (si tu versión lo soporta) o dejamos que tome los prefijos dados.
-  # Aquí hacemos un 'touch' forzado ejecutando contra una mini-entrada vacía si quieres
-  # pero normalmente con la primera muestra se crean. Mostramos aviso:
-  echo "ℹ️ Los índices se generarán automáticamente al correr la primera muestra."
-fi
-
-# ============================
-# BUSCAR FASTQ recortados
-# Acepta .fastq y .fastq.gz en pares *_R1.trimmed* / *_R2.trimmed*
+# BUSCAR FASTQ
 # ============================
 
 R1_LIST=( "$IN_DIR"/*_R1.trimmed.fastq(.N) "$IN_DIR"/*_R1.trimmed.fastq.gz(.N) )
+
 if (( ${#R1_LIST} == 0 )); then
-  echo "❌ No se encontraron archivos R1 recortados en $IN_DIR (patrones *_R1.trimmed.fastq(.gz))."
+  echo "❌ No se encontraron archivos R1 en $IN_DIR"
   exit 1
 fi
 
 # ============================
-# PROCESAR MUESTRAS PAREADAS
+# PROCESAR CADA MUESTRA
 # ============================
 
 for R1 in "${R1_LIST[@]}"; do
-  # Derivar R2 y sample base
+
   if [[ "$R1" == *.gz ]]; then
     base="${R1%_R1.trimmed.fastq.gz}"
     R2="${base}_R2.trimmed.fastq.gz"
-    EXT=".fastq.gz"
   else
     base="${R1%_R1.trimmed.fastq}"
     R2="${base}_R2.trimmed.fastq"
-    EXT=".fastq"
   fi
 
-  sample="${base##*/}"   # basename sin ruta
+  sample="${base##*/}"
   OUT_DIR="$OUT_ROOT/$sample"
   mkdir -p "$OUT_DIR"
 
   if [[ ! -f "$R2" ]]; then
-    echo "⚠️ No se encontró el par R2 para $R1 (esperado: $R2). Se omite."
+    echo "⚠️ No se encontró el archivo R2 para $R1 (esperado: $R2)"
     continue
   fi
 
-  echo "▶️  Procesando muestra: $sample"
-  echo "    R1: $R1"
-  echo "    R2: $R2"
-  echo "    Salida: $OUT_DIR"
+  echo "▶️ Procesando muestra: $sample"
+  echo "   R1: $R1"
+  echo "   R2: $R2"
+  echo "   Salida: $OUT_DIR"
 
-  # Salidas deseadas:
-  #  - Lecturas rRNA (aligned) y no-rRNA (other), separadas por par
-  #  - Log con estadísticas
   ALIGNED_BASE="$OUT_DIR/${sample}.rRNA"
   OTHER_BASE="$OUT_DIR/${sample}.non_rRNA"
   LOGFILE="$OUT_DIR/${sample}.sortmerna.log"
 
-  # sortmerna (modo paired)
-  # Notas:
-  #  --paired_in      : indica que reads están en archivos separados R1/R2
-  #  --fastx          : produce FASTQ/FASTA de salida (no solo accesiones)
-  #  --aligned/--other: prefijos de archivo de salida; para paired, SortMeRNA
-  #                     suele generar sufijos _fwd/_rev. Revisa tu versión.
-  #  --workdir        : carpeta de trabajo (temporal + resultados auxiliares)
-  #  --threads        : hilos
-  #
-  # Si tu versión no añade _fwd/_rev automáticamente, quedarán archivos únicos (interleaved).
-  # Ajusta nombres si lo deseas.
+ sortmerna \
+  "${REF_ARGS[@]}" \
+  --reads "$R1" \
+  --reads "$R2" \
+  --paired_in \
+  --fastx \
+  --aligned "$ALIGNED_BASE" \
+  --other   "$OTHER_BASE" \
+  --workdir "$OUT_DIR" \
+  --idx-dir "$IDX_DIR" \
+  --threads "$THREADS" \
+  &> "$LOGFILE"
 
-  sortmerna \
-    "${REF_ARGS[@]}" \
-    --reads "$R1" \
-    --reads "$R2" \
-    --paired_in \
-    --fastx \
-    --aligned "$ALIGNED_BASE" \
-    --other   "$OTHER_BASE" \
-    --workdir "$OUT_DIR" \
-    --threads "$THREADS" \
-    &> "$LOGFILE"
 
-  echo "✅ Terminado: $sample"
-  echo "   rRNA:     ${ALIGNED_BASE}*"
-  echo "   no-rRNA:  ${OTHER_BASE}*"
-  echo "   log:      $LOGFILE"
+  echo "   ✔ Finalizado: $sample"
+  echo "     Archivos rRNA:     ${ALIGNED_BASE}*"
+  echo "     Archivos no-rRNA:  ${OTHER_BASE}*"
+  echo "     Log:                $LOGFILE"
+
 done
 
-echo "🎉 Proceso completo. Resultados en: $OUT_ROOT"
+echo "🎉 Proceso completo. Resultados en $OUT_ROOT"
+
+#Análisis taxonómico con MetaPhlAn. MetaPhlAn se utiliza para determinar la composición taxonómica de la comunidad microbiana presente en las muestras metatranscriptómicas. Este análisis se basa en la detección de genes marcadores clado-específicos, lo que permite identificar organismos desde nivel filo hasta nivel especie con alta precisión. En este pipeline, MetaPhlAn se ejecuta usando lecturas limpias post-Cutadapt y no la salida filtrada por SortMeRNA. La razón es que MetaPhlAn no depende de genes ribosomales ni requiere remover rRNA: su algoritmo utiliza marcadores únicos distribuidos en los genomas microbianos, por lo que necesita todas las lecturas para maximizar la detección de los microorganismos presentes. De esta forma, el perfil taxonómico refleja mejor la composición real de la comunidad activa.
+
+#Activar y revisar instalación en otro ambiente (version 4.2.4)
+
+conda activate meta4
+metaphlan --version
+
+
+#!/bin/zsh
+
+set -e
+setopt NULL_GLOB
+
+# ============================
+# CONFIGURACIÓN
+# ============================
+
+# Carpeta con FASTQ post-Cutadapt
+IN_DIR="cutadapt_results"
+
+# Carpeta de salida
+OUT_DIR="metaphlan_results"
+mkdir -p "$OUT_DIR"
+
+# Número de hilos
+THREADS=12
+
+# ============================
+# BUSCAR ARCHIVOS R1
+# ============================
+
+R1_LIST=( "$IN_DIR"/*_R1.trimmed.fastq(.N) "$IN_DIR"/*_R1.trimmed.fastq.gz(.N) )
+
+if (( ${#R1_LIST} == 0 )); then
+  echo "❌ No se encontraron archivos R1 en $IN_DIR"
+  exit 1
+fi
+
+# ============================
+# PROCESAR CADA MUESTRA
+# ============================
+
+for R1 in "${R1_LIST[@]}"; do
+  
+  # identificar R2
+  if [[ "$R1" == *.gz ]]; then
+    base="${R1%_R1.trimmed.fastq.gz}"
+    R2="${base}_R2.trimmed.fastq.gz"
+  else
+    base="${R1%_R1.trimmed.fastq}"
+    R2="${base}_R2.trimmed.fastq"
+  fi
+
+  sample="${base##*/}"
+  OUT="$OUT_DIR/${sample}.profile.txt"
+
+  echo "▶️  MetaPhlAn: procesando $sample"
+
+ metaphlan "$R1","$R2" \
+  --input_type fastq \
+  --nproc "$THREADS" \
+  --mapout "${OUT%.txt}.bowtie2.bz2" \
+  -o "$OUT"
+
+  echo "   ✔ Finalizado: $OUT"
+
+done
+
+echo "🎉 MetaPhlAn completado para todas las muestras."
 
 
 
