@@ -436,6 +436,13 @@ done
 
 echo "🎉 MetaPhlAn completado para todas las muestras."
 
+merge_metaphlan_tables.py metaphlan_results/*profile.txt > metaphlan_merged.tsv #crea un archivo donde conjunta todas las asignaciones taxonómicas de MetaPhlan. 
+
+# El análisis taxonómico se realizó con MetaPhlAn utilizando las lecturas limpias post-Cutadapt, generando para cada muestra un archivo <muestra>.profile.txt que contiene la abundancia relativa de cada taxón detectado mediante genes marcadores clado-específicos de la base de datos CHOCOPhlAn. Estos perfiles incluyen organismos desde nivel reino hasta especie, expresados como porcentajes normalizados en relación con el total de marcadores detectados en la muestra. Además, MetaPhlAn produce un archivo auxiliar <muestra>.profile.bowtie2.bz2 con las asignaciones de lecturas a marcadores, útil para reproducibilidad y auditoría del análisis. Para facilitar comparaciones entre muestras y análisis estadísticos posteriores, todos los perfiles individuales se integraron en una sola matriz de abundancias mediante el comando merge_metaphlan_tables.py, generando un archivo tabular consolidado en el que las filas representan los taxones y las columnas representan cada muestra del estudio.
+
+# El último paso de procesamiento es con el paquete Humann. Se instala en ambiente aislado para evitar conflictos con los anteriores. 
+# HUMAnN se utiliza para obtener el perfil funcional de la comunidad microbiana a partir de las lecturas metatranscriptómicas, cuantificando la abundancia de genes, familias funcionales y rutas metabólicas. En este pipeline, HUMAnN se ejecuta principalmente sobre las lecturas no ribosomales (non-rRNA) generadas tras el filtrado con SortMeRNA, lo que reduce el ruido de secuencias altamente conservadas y mejora la eficiencia computacional. A partir de bases de datos de referencia (ChocoPhlAn y UniRef), HUMAnN asigna lecturas a genes y funciones, reconstruye rutas metabólicas y permite integrar estos perfiles funcionales con la información taxonómica obtenida con MetaPhlAn, respondiendo a la pregunta: “¿Qué están haciendo los microorganismos activos en la muestra?”.
+
 
 
 ### Subtítulo nivel 2
