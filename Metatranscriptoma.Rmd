@@ -444,6 +444,78 @@ merge_metaphlan_tables.py metaphlan_results/*profile.txt > metaphlan_merged.tsv 
 # HUMAnN se utiliza para obtener el perfil funcional de la comunidad microbiana a partir de las lecturas metatranscriptómicas, cuantificando la abundancia de genes, familias funcionales y rutas metabólicas. En este pipeline, HUMAnN se ejecuta principalmente sobre las lecturas no ribosomales (non-rRNA) generadas tras el filtrado con SortMeRNA, lo que reduce el ruido de secuencias altamente conservadas y mejora la eficiencia computacional. A partir de bases de datos de referencia (ChocoPhlAn y UniRef), HUMAnN asigna lecturas a genes y funciones, reconstruye rutas metabólicas y permite integrar estos perfiles funcionales con la información taxonómica obtenida con MetaPhlAn, respondiendo a la pregunta: “¿Qué están haciendo los microorganismos activos en la muestra?”.
 
 
+# Humann
+
+# Activa humann, revisa versión e instalación de bases de datos
+
+conda activate humann3
+
+humann --version
+
+humann_config --print
+
+# Corre Humann
+
+#!/bin/zsh
+
+set -e
+setopt NULL_GLOB
+
+# ============================
+# CONFIGURACIÓN
+# ============================
+
+# Carpeta con resultados de SortMeRNA
+SMR_DIR="sortmerna_results"
+
+# Carpeta de salida de HUMAnN
+OUT_DIR="humann_results"
+mkdir -p "$OUT_DIR"
+
+# Número de hilos
+THREADS=8
+
+# Modo de búsqueda según la BD instalada (ver humann_config --print)
+# Si instalaste uniref50_diamond:
+SEARCH_MODE="uniref50"
+# Si fuera uniref90_diamond, cambia a:
+# SEARCH_MODE="uniref90"
+
+# ============================
+# PROCESAR CADA MUESTRA
+# ============================
+
+# Recorremos todos los archivos *.non_rRNA.fq dentro de sortmerna_results
+for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
+  # Ejemplo NON:
+  # sortmerna_results/7310-1-HiSeqTranscript_S1/7310-1-HiSeqTranscript_S1.non_rRNA.fq
+
+  SAMPLE_DIR="$(dirname "$NON")"
+  sample="$(basename "$NON" .non_rRNA.fq)"   # quita sufijo .non_rRNA.fq
+
+  echo "▶️  HUMAnN: procesando muestra $sample"
+  echo "    Input non-rRNA: $NON"
+
+  # Carpeta de salida de HUMAnN para esta muestra
+  SAMPLE_OUT="$OUT_DIR/$sample"
+  mkdir -p "$SAMPLE_OUT"
+
+  # Ejecutar HUMAnN SIN MetaPhlAn, SIN perfil taxonómico
+  humann \
+    -i "$NON" \
+    -o "$SAMPLE_OUT" \
+    --threads "$THREADS" \
+    --input-format fastq \
+    --search-mode "$SEARCH_MODE" \
+    --bypass-prescreen
+
+  echo "    ✔ HUMAnN terminado para $sample"
+  echo "      Resultados en: $SAMPLE_OUT"
+done
+
+echo "🎉 HUMAnN completado para todas las muestras."
+
+
 
 ### Subtítulo nivel 2
 
