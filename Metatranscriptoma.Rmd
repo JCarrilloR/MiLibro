@@ -446,13 +446,16 @@ merge_metaphlan_tables.py metaphlan_results/*profile.txt > metaphlan_merged.tsv 
 
 # Humann
 
-# Activa humann, revisa versión e instalación de bases de datos
-
-conda activate humann3
+# Activa humann, revisa versión e instalación de bases de datos. Se instala Python + pip
+conda activate humannpip
 
 humann --version
 
 humann_config --print
+
+diamond --version
+bowtie2 --version
+
 
 # Corre Humann
 
@@ -461,46 +464,23 @@ humann_config --print
 set -e
 setopt NULL_GLOB
 
-# ============================
-# CONFIGURACIÓN
-# ============================
-
-# Carpeta con resultados de SortMeRNA
 SMR_DIR="sortmerna_results"
-
-# Carpeta de salida de HUMAnN
 OUT_DIR="humann_results"
 mkdir -p "$OUT_DIR"
 
-# Número de hilos
-THREADS=8
+THREADS=12
+SEARCH_MODE="uniref50"   # o uniref90 según tu BD
 
-# Modo de búsqueda según la BD instalada (ver humann_config --print)
-# Si instalaste uniref50_diamond:
-SEARCH_MODE="uniref50"
-# Si fuera uniref90_diamond, cambia a:
-# SEARCH_MODE="uniref90"
-
-# ============================
-# PROCESAR CADA MUESTRA
-# ============================
-
-# Recorremos todos los archivos *.non_rRNA.fq dentro de sortmerna_results
 for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
-  # Ejemplo NON:
-  # sortmerna_results/7310-1-HiSeqTranscript_S1/7310-1-HiSeqTranscript_S1.non_rRNA.fq
-
   SAMPLE_DIR="$(dirname "$NON")"
-  sample="$(basename "$NON" .non_rRNA.fq)"   # quita sufijo .non_rRNA.fq
+  sample="$(basename "$NON" .non_rRNA.fq)"
 
   echo "▶️  HUMAnN: procesando muestra $sample"
   echo "    Input non-rRNA: $NON"
 
-  # Carpeta de salida de HUMAnN para esta muestra
   SAMPLE_OUT="$OUT_DIR/$sample"
   mkdir -p "$SAMPLE_OUT"
 
-  # Ejecutar HUMAnN SIN MetaPhlAn, SIN perfil taxonómico
   humann \
     -i "$NON" \
     -o "$SAMPLE_OUT" \
@@ -514,6 +494,7 @@ for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
 done
 
 echo "🎉 HUMAnN completado para todas las muestras."
+
 
 
 
