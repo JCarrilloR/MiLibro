@@ -457,7 +457,7 @@ diamond --version
 bowtie2 --version
 
 
-# Corre Humann
+# Correr Humann. El análisis funcional se realizó con HUMAnN (The HMP Unified Metabolic Analysis Network), utilizando como entrada las lecturas non-rRNA obtenidas tras el filtrado con SortMeRNA. Dado que la asignación taxonómica se efectuó previamente con MetaPhlAn, HUMAnN se ejecutó en modo funcional directo, omitiendo tanto el prescreen taxonómico como la búsqueda nucleotídica contra ChocoPhlAn. Esta configuración permite centrarse exclusivamente en la expresión de genes microbianos, empleando DIAMOND para alinear los transcritos contra las bases UniRef50/90, desde donde se cuantifican familias de genes y se reconstruyen rutas metabólicas.
 
 #!/bin/zsh
 
@@ -469,7 +469,7 @@ OUT_DIR="humann_results"
 mkdir -p "$OUT_DIR"
 
 THREADS=12
-SEARCH_MODE="uniref50"   # o uniref90 según tu BD
+SEARCH_MODE="uniref50"   # o uniref90 según la BD que bajaste
 
 for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
   SAMPLE_DIR="$(dirname "$NON")"
@@ -487,7 +487,8 @@ for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
     --threads "$THREADS" \
     --input-format fastq \
     --search-mode "$SEARCH_MODE" \
-    --bypass-prescreen
+    --bypass-prescreen \
+    --bypass-nucleotide-search
 
   echo "    ✔ HUMAnN terminado para $sample"
   echo "      Resultados en: $SAMPLE_OUT"
@@ -495,7 +496,13 @@ done
 
 echo "🎉 HUMAnN completado para todas las muestras."
 
+# Salidas esperadas de HUMAnN. La ejecución de HUMAnN produce un conjunto de archivos estandarizados que resumen la actividad funcional de la comunidad microbiana. Cada muestra genera una carpeta con tres salidas principales y varios archivos auxiliares. A continuación, se describe la función y el contenido de cada uno: i) Gene families. Archivo: sample_genefamilies.tsv. Abundancia de familias de genes asignadas a clusters UniRef50 o UniRef90, dependiendo del modo seleccionado. Cada fila representa una familia de proteínas (UniRef ID), y cada columna contiene su abundancia normalizada (RPK units o CPM según parametrización). Cuando se permite estratificación, HUMAnN incorpora niveles taxonómicos en el identificador, separando los componentes con “|”, por ejemplo: UniRef90_Q9K8J5|g__Pseudomonas, UniRef50_UPI0006D8F3E5|unclassified. Este archivo describe qué genes (o familias génicas) están siendo expresados en la comunidad y permite comparaciones a nivel funcional fino entre muestras. ii) 2. Pathway abundance. Archivo: sample_pathabundance.tsv
+Qué contiene Abundancia relativa de rutas metabólicas como definidas por MetaCyc. Las rutas están representadas por IDs como: PWY-6545, GLYCOLYSIS
+Cada valor representa la abundancia estimada del conjunto de reacciones que conforman la vía. Si la estratificación está activada, se dividirá la contribución por cada taxón detectado. Indica qué rutas metabólicas están activas y en qué magnitud. Es útil para identificar procesos en funcionamiento, p. ej. fermentación, transporte de azúcares, degradación de ácidos grasos, producción de metabolitos específicos, etc. iii) 3. Pathway coverage. Archivo: sample_pathcoverage.tsv Qué contiene Medida binaria o semicuantitativa que indica si una ruta está completa según la presencia de los genes requeridos.
+Valores típicos: 0.0 → no cubierta, 0.5 → parcialmente cubierta, 1.0 → los genes necesarios están presentes. Complementa a la abundancia: una vía puede tener alta abundancia pero baja cobertura si algunos pasos clave no están representados en los transcritos. 
 
+# Además de las tablas principales de genes y rutas, HUMAnN genera varios archivos complementarios que apoyan el análisis y la reproducibilidad. i) Carpeta _temp/. Contiene archivos intermedios generados durante el procesamiento. Es útil para depuración, pero puede eliminarse al finalizar el análisis. ii) Archivo de registro (sample.log) Incluye parámetros utilizados, versiones de software, estadísticas del proceso y advertencias o errores. Es un documento esencial para la trazabilidad y la reproducibilidad del análisis. iii) Archivos renormalizados (solo si se ejecuta humann_renorm_table)
+Ejemplos: *_genefamilies_relab.tsv, *_pathabundance_relab.tsv. Presentan abundancias relativas (0–1 o %) y permiten comparar muestras con distinta profundidad de secuenciación. iv) Archivos estratificados por taxón. Si la estratificación está activada, los archivos de abundancia añadirán líneas que indican la contribución de cada taxón a una ruta o gen (p. ej., PWY-6545|g__Pseudomonas). Permiten identificar “qué organismo” está contribuyendo a cada función expresada.
 
 
 ### Subtítulo nivel 2
