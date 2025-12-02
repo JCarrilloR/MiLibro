@@ -504,6 +504,96 @@ Valores típicos: 0.0 → no cubierta, 0.5 → parcialmente cubierta, 1.0 → lo
 # Además de las tablas principales de genes y rutas, HUMAnN genera varios archivos complementarios que apoyan el análisis y la reproducibilidad. i) Carpeta _temp/. Contiene archivos intermedios generados durante el procesamiento. Es útil para depuración, pero puede eliminarse al finalizar el análisis. ii) Archivo de registro (sample.log) Incluye parámetros utilizados, versiones de software, estadísticas del proceso y advertencias o errores. Es un documento esencial para la trazabilidad y la reproducibilidad del análisis. iii) Archivos renormalizados (solo si se ejecuta humann_renorm_table)
 Ejemplos: *_genefamilies_relab.tsv, *_pathabundance_relab.tsv. Presentan abundancias relativas (0–1 o %) y permiten comparar muestras con distinta profundidad de secuenciación. iv) Archivos estratificados por taxón. Si la estratificación está activada, los archivos de abundancia añadirán líneas que indican la contribución de cada taxón a una ruta o gen (p. ej., PWY-6545|g__Pseudomonas). Permiten identificar “qué organismo” está contribuyendo a cada función expresada.
 
+# Integración y normalización de resultados de HUMAnN. Después de ejecutar HUMAnN, cada muestra genera archivos independientes con la abundancia de familias de genes, rutas metabólicas y cobertura de vías. Para facilitar su comparación entre muestras, se utilizó un script (run_humann_merge.sh) que automatiza dos pasos: Unión de resultados
+El script recorre todas las carpetas dentro de humann_results/ y combina los archivos:
+genefamilies
+pathabundance
+pathcoverage
+en tres tablas maestras que integran todas las muestras.
+
+Normalización
+Las tablas combinadas se convierten a abundancias relativas, lo que permite comparar muestras con distinta profundidad de secuenciación.
+El resultado final es un conjunto de tablas normalizadas y listas para análisis posteriores, almacenadas en la carpeta humann_merged/.
+
+#!/bin/zsh
+
+set -e
+
+# ============================
+# CONFIGURACIÓN
+# ============================
+
+# Carpeta donde están las salidas por muestra de HUMAnN
+IN_DIR="humann_results"
+
+# Carpeta para tablas combinadas
+OUT_DIR="humann_merged"
+mkdir -p "$OUT_DIR"
+
+echo "▶️ Usando entradas de: $IN_DIR"
+echo "▶️ Guardando tablas combinadas en: $OUT_DIR"
+echo
+
+# ============================
+# 1. UNIR TABLAS
+# ============================
+
+echo "🔹 Uniendo genefamilies..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "genefamilies" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_genefamilies_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_genefamilies_all.tsv"
+echo
+
+echo "🔹 Uniendo pathabundance..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "pathabundance" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_pathabundance_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathabundance_all.tsv"
+echo
+
+echo "🔹 Uniendo pathcoverage..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "pathcoverage" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_pathcoverage_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathcoverage_all.tsv"
+echo
+
+# ============================
+# 2. RENORMALIZAR A ABUNDANCIA RELATIVA
+# ============================
+
+echo "🔹 Renormalizando genefamilies a abundancia relativa..."
+humann_renorm_table \
+  --input "$OUT_DIR/humann_genefamilies_all.tsv" \
+  --output "$OUT_DIR/humann_genefamilies_all_relab.tsv" \
+  --units relab
+
+echo "   ✔ Generado: $OUT_DIR/humann_genefamilies_all_relab.tsv"
+echo
+
+echo "🔹 Renormalizando pathabundance a abundancia relativa..."
+humann_renorm_table \
+  --input "$OUT_DIR/humann_pathabundance_all.tsv" \
+  --output "$OUT_DIR/humann_pathabundance_all_relab.tsv" \
+  --units relab
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathabundance_all_relab.tsv"
+echo
+
+echo "🎉 Proceso de merge y renormalización completado."
+echo "   Archivos finales en: $OUT_DIR"
+
+
 
 ### Subtítulo nivel 2
 
