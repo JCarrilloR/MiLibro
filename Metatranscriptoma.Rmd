@@ -595,7 +595,7 @@ echo "   Archivos finales en: $OUT_DIR"
 
 
 
-#Como ultimo paso Reagruparemos UniRef40 a KO debemos iniciar en la carpeta donde estan los archivos de salifa de humann "humann_merged" que contiene los archivos "input humann_genefamilies_all.tsv" y "output humann_genefamilies_all_KO.tsv". Las tablas de familias de genes a nivel UniRef50 fueron reagregadas a niveles funcionales superiores (KEGG Orthology y Enzyme Commission) utilizando la herramienta humann_regroup_table y los grupos de mapeo internos de HUMAnN (uniref50_ko y uniref50_level4ec).
+# Como ultimo paso Reagruparemos UniRef40 a KO debemos iniciar en la carpeta donde estan los archivos de salifa de humann "humann_merged" que contiene los archivos "input humann_genefamilies_all.tsv" y "output humann_genefamilies_all_KO.tsv". Las tablas de familias de genes a nivel UniRef50 fueron reagregadas a niveles funcionales superiores (KEGG Orthology y Enzyme Commission) utilizando la herramienta humann_regroup_table y los grupos de mapeo internos de HUMAnN (uniref50_ko y uniref50_level4ec).
 
 conda activate humannpip
 ls 
@@ -620,7 +620,7 @@ humann_regroup_table \
   -g uniref50_level4ec \
   -o humann_genefamilies_all_relab_EC.tsv
 
-* El análisis funcional con HUMAnN genera inicialmente resultados a nivel de familias de genes UniRef, que posteriormente pueden reagruparse a niveles funcionales más interpretables, como KEGG Orthology (KO) y Enzyme Commission (EC). Cada uno de estos niveles responde a preguntas biológicas distintas y tiene implicaciones diferentes para el análisis.
+# El análisis funcional con HUMAnN genera inicialmente resultados a nivel de familias de genes UniRef, que posteriormente pueden reagruparse a niveles funcionales más interpretables, como KEGG Orthology (KO) y Enzyme Commission (EC). Cada uno de estos niveles responde a preguntas biológicas distintas y tiene implicaciones diferentes para el análisis.
 
 
 Contenido
