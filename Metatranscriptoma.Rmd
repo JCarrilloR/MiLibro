@@ -598,29 +598,176 @@ echo "   Archivos finales en: $OUT_DIR"
 # Como ultimo paso Reagruparemos UniRef40 a KO debemos iniciar en la carpeta donde estan los archivos de salifa de humann "humann_merged" que contiene los archivos "input humann_genefamilies_all.tsv" y "output humann_genefamilies_all_KO.tsv". Las tablas de familias de genes a nivel UniRef50 fueron reagregadas a niveles funcionales superiores (KEGG Orthology y Enzyme Commission) utilizando la herramienta humann_regroup_table y los grupos de mapeo internos de HUMAnN (uniref50_ko y uniref50_level4ec).
 
 conda activate humannpip
+cd /Volumes/Respaldo/secuencias/CervantesRna/
 ls 
 
-humann_regroup_table \
-  -i humann_genefamilies_all.tsv \
-  -g uniref50_ko \
-  -o humann_genefamilies_all_KO.tsv
+export PATH="/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
 
-humann_regroup_table \
-  -i humann_genefamilies_all_relab.tsv \
-  -g uniref50_ko \
-  -o humann_genefamilies_all_relab_KO.tsv
+#!/bin/zsh
 
-humann_regroup_table \
-  -i humann_genefamilies_all.tsv \
-  -g uniref50_level4ec \
-  -o humann_genefamilies_all_EC.tsv
+set -e
+setopt NULL_GLOB
 
-humann_regroup_table \
-  -i humann_genefamilies_all_relab.tsv \
-  -g uniref50_level4ec \
-  -o humann_genefamilies_all_relab_EC.tsv
+# Mantener primero el ambiente activo humannpip
+export PATH="/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
 
-# El análisis funcional con HUMAnN genera inicialmente resultados a nivel de familias de genes UniRef, que posteriormente pueden reagruparse a niveles funcionales más interpretables, como KEGG Orthology (KO) y Enzyme Commission (EC). Cada uno de estos niveles responde a preguntas biológicas distintas y tiene implicaciones diferentes para el análisis.
+# Ruta explícita a MetaPhlAn en meta4
+METAPHLAN_BIN="/Users/bio2/miniconda/envs/meta4/bin/metaphlan"
+
+SMR_DIR="sortmerna_results"
+MPA_DIR="metaphlan_results"
+OUT_DIR="humann_results_stratified"
+
+mkdir -p "$OUT_DIR"
+
+THREADS=12
+SEARCH_MODE="uniref50"
+
+MPA_DB="/Users/bio2/miniconda/envs/meta4/lib/python3.10/site-packages/metaphlan/metaphlan_databases"
+
+# Verificaciones
+echo "✅ HUMAnN detectado en: $(which humann)"
+echo "✅ MetaPhlAn usado desde: $METAPHLAN_BIN"
+echo "✅ Base MetaPhlAn: $MPA_DB"
+
+if ! command -v humann >/dev/null 2>&1; then
+  echo "❌ No se encontró humann en el ambiente humannpip."
+  exit 1
+fi
+
+if [[ ! -x "$METAPHLAN_BIN" ]]; then
+  echo "❌ No se encontró metaphlan ejecutable en:"
+  echo "   $METAPHLAN_BIN"
+  exit 1
+fi
+
+for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
+  sample="$(basename "$NON" .non_rRNA.fq)"
+  MPA_PROFILE="$MPA_DIR/${sample}.profile.txt"
+  SAMPLE_OUT="$OUT_DIR/$sample"
+
+  echo "▶️ HUMAnN estratificado: $sample"
+  echo "   non-rRNA: $NON"
+  echo "   MetaPhlAn profile: $MPA_PROFILE"
+
+  if [[ ! -f "$MPA_PROFILE" ]]; then
+    echo "⚠️ No se encontró perfil MetaPhlAn para $sample. Se omite."
+    continue
+  fi
+
+  mkdir -p "$SAMPLE_OUT"
+
+  humann \
+    -i "$NON" \
+    -o "$SAMPLE_OUT" \
+    --threads "$THREADS" \
+    --input-format fastq \
+    --search-mode "$SEARCH_MODE" \
+    --taxonomic-profile "$MPA_PROFILE" \
+    --metaphlan-options "--bowtie2db $MPA_DB"
+
+  echo "✔ Terminado: $sample"
+done
+
+echo "🎉 HUMAnN estratificado completado."
 
 
 Contenido
+
+Corriendo solo una muestra
+
+
+#Wrapper
+
+
+
+mkdir -p bin_wrappers
+nano bin_wrappers/metaphlan
+
+#!/bin/zsh
+
+if [[ "$1" == "--version" ]]; then
+  echo "MetaPhlAn version 4.2.4"
+  exit 0
+fi
+
+/Users/bio2/miniconda/envs/meta4/bin/python /Users/bio2/miniconda/envs/meta4/bin/metaphlan "$@"
+
+#
+conda activate humannpip
+cd /Volumes/Respaldo/secuencias/CervantesRna/
+ls 
+
+
+
+
+#!/bin/zsh
+
+set -e
+setopt NULL_GLOB
+
+# HUMAnN desde humannpip y MetaPhlAn desde wrapper
+export PATH="/Volumes/Respaldo/secuencias/CervantesRna/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:$PATH"
+
+rehash
+
+SMR_DIR="sortmerna_results"
+MPA_DIR="metaphlan_results"
+OUT_DIR="humann_results_stratified"
+
+mkdir -p "$OUT_DIR"
+
+THREADS=12
+SEARCH_MODE="uniref50"
+
+# Verificaciones
+echo "✅ HUMAnN detectado en: $(which humann)"
+echo "✅ MetaPhlAn detectado en: $(which metaphlan)"
+echo "✅ Versión MetaPhlAn:"
+metaphlan --version
+
+if ! command -v humann >/dev/null 2>&1; then
+  echo "❌ No se encontró humann en el ambiente humannpip."
+  exit 1
+fi
+
+if ! command -v metaphlan >/dev/null 2>&1; then
+  echo "❌ No se encontró metaphlan en el PATH."
+  exit 1
+fi
+
+NON="sortmerna_results/7310-1-HiSeqTranscript_S1/7310-1-HiSeqTranscript_S1.non_rRNA.fq"
+
+sample="$(basename "$NON" .non_rRNA.fq)"
+MPA_PROFILE="$MPA_DIR/${sample}.profile.txt"
+SAMPLE_OUT="$OUT_DIR/$sample"
+
+echo "▶️ HUMAnN estratificado prueba: $sample"
+echo "   non-rRNA: $NON"
+echo "   MetaPhlAn profile: $MPA_PROFILE"
+
+if [[ ! -f "$NON" ]]; then
+  echo "❌ No se encontró archivo non-rRNA:"
+  echo "   $NON"
+  exit 1
+fi
+
+if [[ ! -f "$MPA_PROFILE" ]]; then
+  echo "❌ No se encontró perfil MetaPhlAn:"
+  echo "   $MPA_PROFILE"
+  exit 1
+fi
+
+mkdir -p "$SAMPLE_OUT"
+
+humann \
+  -i "$NON" \
+  -o "$SAMPLE_OUT" \
+  --threads "$THREADS" \
+  --input-format fastq \
+  --search-mode "$SEARCH_MODE" \
+  --taxonomic-profile "$MPA_PROFILE"
+
+echo "✔ Prueba terminada: $sample"
+
+
