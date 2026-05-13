@@ -736,7 +736,7 @@ if ! command -v metaphlan >/dev/null 2>&1; then
   exit 1
 fi
 
-NON="sortmerna_results/7310-1-HiSeqTranscript_S1/7310-1-HiSeqTranscript_S1.non_rRNA.fq"
+for NON in "$SMR_DIR"/*/*.non_rRNA.fq(.N); do
 
 sample="$(basename "$NON" .non_rRNA.fq)"
 MPA_PROFILE="$MPA_DIR/${sample}.profile.txt"
@@ -769,5 +769,92 @@ humann \
   --taxonomic-profile "$MPA_PROFILE"
 
 echo "✔ Prueba terminada: $sample"
+done
 
+##
+
+
+# ============================
+# CONFIGURACIÓN
+# ============================
+
+# Carpeta donde están las salidas por muestra de HUMAnN
+IN_DIR="humann_results_stratified"
+
+# Carpeta para tablas combinadas
+OUT_DIR="humann_merged_stratified"
+mkdir -p "$OUT_DIR"
+
+echo "▶️ Usando entradas de: $IN_DIR"
+echo "▶️ Guardando tablas combinadas en: $OUT_DIR"
+echo
+
+# ============================
+# 1. UNIR TABLAS
+# ============================
+
+echo "🔹 Uniendo genefamilies..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "genefamilies" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_genefamilies_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_genefamilies_all.tsv"
+echo
+
+echo "🔹 Uniendo pathabundance..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "pathabundance" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_pathabundance_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathabundance_all.tsv"
+echo
+
+echo "🔹 Uniendo pathcoverage..."
+humann_join_tables \
+  --input "$IN_DIR" \
+  --file_name "pathcoverage" \
+  --search-subdirectories \
+  --output "$OUT_DIR/humann_pathcoverage_all.tsv"
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathcoverage_all.tsv"
+echo
+
+# ============================
+# 2. RENORMALIZAR A ABUNDANCIA RELATIVA
+# ============================
+
+echo "🔹 Renormalizando genefamilies a abundancia relativa..."
+humann_renorm_table \
+  --input "$OUT_DIR/humann_genefamilies_all.tsv" \
+  --output "$OUT_DIR/humann_genefamilies_all_relab.tsv" \
+  --units relab
+
+echo "   ✔ Generado: $OUT_DIR/humann_genefamilies_all_relab.tsv"
+echo
+
+echo "🔹 Renormalizando pathabundance a abundancia relativa..."
+humann_renorm_table \
+  --input "$OUT_DIR/humann_pathabundance_all.tsv" \
+  --output "$OUT_DIR/humann_pathabundance_all_relab.tsv" \
+  --units relab
+
+echo "   ✔ Generado: $OUT_DIR/humann_pathabundance_all_relab.tsv"
+echo
+
+echo "🎉 Proceso de merge y renormalización completado."
+echo "   Archivos finales en: $OUT_DIR"
+
+humann_regroup_table \
+  -i humann_merged_stratified/humann_genefamilies_all.tsv \
+  -g uniref50_ko \
+  -o humann_merged_stratified/humann_genefamilies_all_KO.tsv
+
+humann_regroup_table \
+  -i humann_merged_stratified/humann_genefamilies_all.tsv \
+  -g uniref50_level4ec \
+  -o humann_merged_stratified/humann_genefamilies_all_EC.tsv
 
