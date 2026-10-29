@@ -512,3 +512,124 @@ echo "Integración completada: ocho muestras, 16 archivos finales."
 echo "Resultados: $OUT_DIR"
 ZSH
 
+# Plan de análisis posterior al control de calidad
+
+## Las lecturas limpias e integradas se utilizarán en dos ramas
+## complementarias de análisis metagenómico.
+
+## Rama 1. Análisis directo de lecturas.
+## MetaPhlAn: estimación de la composición taxonómica.
+## HUMAnN: estimación de familias génicas y rutas metabólicas.
+
+## Rama 2. Análisis basado en ensamblaje.
+## Ensamblaje de las lecturas pareadas para obtener contigs.
+## Evaluación del ensamblaje y predicción de genes.
+## Anotación funcional y mapeo de lecturas para cuantificar abundancias.
+## Agrupamiento de contigs en bins y evaluación de calidad
+## para recuperar genomas ensamblados de metagenomas (MAGs).
+
+## Ambas ramas describen composición y potencial genético.
+## No demuestran por sí mismas expresión ni actividad metabólica.
+
+# 8. Verificación de MetaPhlAn y sus dependencias
+
+## Activar el ambiente utilizado en el análisis anterior.
+
+conda activate meta4
+
+## Consultar la ubicación y versión real de MetaPhlAn.
+
+command -v metaphlan
+metaphlan --version
+
+## Comprobar Bowtie2.
+
+command -v bowtie2
+bowtie2 --version
+
+## Revisar la carpeta de bases de datos utilizada anteriormente.
+
+ls -lh "/Users/bio2/miniconda/envs/meta4/lib/python3.10/site-packages/metaphlan/metaphlan_databases"
+
+# 9. Perfil taxonómico de las muestras mediante MetaPhlAn
+
+## Se analizarán las lecturas limpias de las ocho muestras.
+## Cada muestra tendrá dos archivos: R1 y R2, con ambos carriles integrados.
+## MetaPhlAn estimará abundancias taxonómicas mediante genes marcadores.
+## Estos resultados describen composición basada en ADN, no actividad.
+
+## Se utilizarán 12 trabajadores y la misma base de datos
+## para todas las muestras. Las muestras se procesarán sucesivamente.
+
+conda activate meta4
+
+zsh <<'ZSH'
+set -euo pipefail
+
+# 9.1. Definir rutas y parámetros.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+IN_DIR="$PROJECT_DIR/merged_reads"
+OUT_DIR="$PROJECT_DIR/metaphlan_results"
+
+DB_DIR="/Users/bio2/miniconda/envs/meta4/lib/python3.10/site-packages/metaphlan/metaphlan_databases"
+DB_INDEX="mpa_vJun23_CHOCOPhlAnSGB_202403"
+THREADS=12
+
+mkdir -p "$OUT_DIR"
+
+# 9.2. Verificar las entradas de las ocho muestras.
+## Se comprueban todas antes de iniciar el procesamiento.
+
+for SAMPLE in C{1..8}; do
+    for READ in R1 R2; do
+        FILE="$IN_DIR/${SAMPLE}_${READ}.fq.gz"
+        [[ -s "$FILE" ]] || {
+            echo "ERROR: archivo ausente o vacío: $FILE"
+            exit 1
+        }
+    done
+
+    # Evitar sobrescribir perfiles o mapeos existentes.
+    for FILE in \
+        "$OUT_DIR/${SAMPLE}.profile.txt" \
+        "$OUT_DIR/${SAMPLE}.mapout.bz2"; do
+        [[ ! -e "$FILE" ]] || {
+            echo "ERROR: ya existe $FILE"
+            exit 1
+        }
+    done
+done
+
+# 9.3. Registrar versión y base de datos.
+
+metaphlan --version > "$OUT_DIR/metaphlan_version.txt" 2>&1
+printf '%s\n' "$DB_INDEX" > "$OUT_DIR/database_index.txt"
+
+# 9.4. Analizar cada muestra.
+## La coma separa los dos archivos de entrada.
+## --mapout conserva el mapeo a marcadores para reutilizarlo.
+## El detalle de ejecución queda en el registro de cada muestra.
+
+for SAMPLE in C{1..8}; do
+    R1="$IN_DIR/${SAMPLE}_R1.fq.gz"
+    R2="$IN_DIR/${SAMPLE}_R2.fq.gz"
+
+    echo "Iniciando MetaPhlAn: $SAMPLE"
+
+    metaphlan "$R1,$R2" \
+        --input_type fastq \
+        --db_dir "$DB_DIR" \
+        --index "$DB_INDEX" \
+        --nproc "$THREADS" \
+        --mapout "$OUT_DIR/${SAMPLE}.mapout.bz2" \
+        -o "$OUT_DIR/${SAMPLE}.profile.txt" \
+        > "$OUT_DIR/${SAMPLE}.metaphlan.log" 2>&1
+
+    echo "Completado: $SAMPLE"
+done
+
+echo "MetaPhlAn completado para las ocho muestras."
+echo "Resultados: $OUT_DIR"
+ZSH
+
