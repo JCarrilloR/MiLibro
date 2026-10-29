@@ -1,0 +1,23 @@
+# 1. Verificación de la integridad de los archivos de secuenciación
+
+## Antes de iniciar el análisis, verificaremos que los archivos descargados
+## estén completos y no se hayan alterado durante su transferencia o copia.
+
+## El conjunto de datos contiene ocho muestras (C1–C8).
+## Cada muestra tiene cuatro archivos FASTQ comprimidos (.fq.gz):
+## dos lecturas pareadas (R1 y R2) por cada uno de los dos carriles
+## de secuenciación. Los carriles corresponden a la misma muestra
+## y no representan réplicas biológicas independientes.
+
+## Novogene proporcionó un archivo MD5.txt dentro de cada carpeta.
+## Este contiene las huellas digitales de los archivos originales.
+## Compararemos esos valores con los calculados en nuestro equipo.
+
+## Si los valores coinciden, podremos continuar con el análisis.
+## Si alguno no coincide, revisaremos el archivo antes de procesarlo.
+
+## Esta comprobación evalúa la integridad de los archivos.
+## La calidad de las lecturas se evaluará posteriormente con FastQC.
+
+## La verificación se realizará sobre los archivos .fq.gz originales,
+## sin descomprimirlos ni modificarlos.
