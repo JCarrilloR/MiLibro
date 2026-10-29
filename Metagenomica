@@ -349,3 +349,166 @@ echo "Limpieza completada para los 16 pares."
 echo "Resultados: $OUT_DIR"
 ZSH
 
+# Configuración de recursos computacionales
+
+## El equipo cuenta con un procesador Apple M4 Max.
+## macOS reporta 16 núcleos físicos y 16 núcleos lógicos.
+## Estos valores no representan 32 núcleos: son 16 en total.
+
+## La ejecución inicial de Cutadapt utiliza ocho trabajadores (-j 8).
+## Para futuras etapas se probará una configuración de 12 trabajadores,
+## según las opciones disponibles en cada programa.
+
+## macOS distribuye los procesos entre los núcleos disponibles.
+## Configurar 12 trabajadores no reserva núcleos físicos específicos
+## ni garantiza que todos se utilicen al 100 %.
+
+## El rendimiento se evaluará considerando el tiempo de ejecución,
+## el consumo de CPU, la presión de memoria y la actividad del disco.
+## Aumentar el paralelismo puede no acelerar las etapas limitadas
+## por compresión o por lectura y escritura en el disco externo.
+
+# 6. Control de calidad posterior a la limpieza
+
+## Evaluaremos las lecturas procesadas con Cutadapt.
+## Mantendremos separados los carriles y los extremos R1/R2.
+## Compararemos la calidad y la retención de lecturas antes
+## de integrar los carriles de cada muestra.
+
+zsh <<'ZSH'
+set -euo pipefail
+
+# 6.1. Definir rutas y recursos.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+IN_DIR="$PROJECT_DIR/cutadapt_results"
+QC_DIR="$PROJECT_DIR/fastqc_trimmed"
+REPORT_DIR="$PROJECT_DIR/multiqc_trimmed"
+THREADS=12
+
+mkdir -p "$QC_DIR" "$REPORT_DIR"
+
+# 6.2. Localizar los archivos limpios.
+## Se esperan 32 archivos: 16 R1 y 16 R2.
+
+TRIMMED_FILES=( "$IN_DIR"/*_R[12].trimmed.fq.gz(N) )
+
+echo "Archivos limpios encontrados: ${#TRIMMED_FILES[@]}"
+
+if (( ${#TRIMMED_FILES[@]} != 32 )); then
+    echo "ERROR: se esperaban 32 archivos FASTQ limpios."
+    exit 1
+fi
+
+# 6.3. Ejecutar FastQC sobre los archivos comprimidos.
+## -t indica cuántos archivos pueden analizarse simultáneamente.
+## No modifica los FASTQ.
+
+fastqc \
+    -t "$THREADS" \
+    -o "$QC_DIR" \
+    "${TRIMMED_FILES[@]}"
+
+# 6.4. Integrar los resultados con MultiQC.
+## Incluimos los reportes de FastQC y los registros de Cutadapt.
+## El informe mostrará la calidad final y las estadísticas de limpieza.
+
+multiqc "$QC_DIR" "$IN_DIR" \
+    --outdir "$REPORT_DIR" \
+    --filename multiqc_trimmed.html
+
+echo "Control de calidad completado."
+echo "Reporte: $REPORT_DIR/multiqc_trimmed.html"
+ZSH
+
+#La limpieza conservó el 99.66 % de las lecturas y mantuvo la calidad alta. Podemos continuar con la integración de carriles.
+#Indicador	Antes	Después
+#Lecturas individuales, R1 + R2	763,091,264	760,484,554
+#Calidad media por posición	Q40.05–40.63	Q40.08–40.64
+#Mediana de longitud	150 pb	150 pb
+#Archivos con FAIL	0	0
+#Advertencias por secuencias sobrerrepresentadas	5	3
+
+# 7. Integración de los carriles de secuenciación por muestra
+
+## La limpieza conservó aproximadamente el 99.66 % de las lecturas.
+## Los archivos limpios mantienen una mediana de longitud de 150 pb
+## y aprobaron las evaluaciones de calidad por base y adaptadores.
+
+## Cada muestra fue secuenciada en dos carriles.
+## Integraremos los R1 de ambos carriles en un archivo
+## y los R2 en otro, manteniendo el mismo orden en ambos extremos.
+
+## Esta operación concatena archivos; no ensambla secuencias
+## ni fusiona las lecturas R1 y R2.
+## Los archivos gzip concatenados conservan el formato comprimido.
+## Los originales y los archivos de Cutadapt permanecerán disponibles.
+
+zsh <<'ZSH'
+set -euo pipefail
+
+# 7.1. Definir las carpetas de entrada y salida.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+IN_DIR="$PROJECT_DIR/cutadapt_results"
+OUT_DIR="$PROJECT_DIR/merged_reads"
+
+mkdir -p "$OUT_DIR"
+
+# 7.2. Comprobar las entradas y evitar sobrescribir resultados.
+## Cada muestra debe tener dos R1, con sus respectivos R2.
+
+for SAMPLE in C{1..8}; do
+    R1_FILES=( "$IN_DIR"/${SAMPLE}_*_R1.trimmed.fq.gz(N) )
+
+    if (( ${#R1_FILES[@]} != 2 )); then
+        echo "ERROR: $SAMPLE debe tener exactamente dos archivos R1."
+        exit 1
+    fi
+
+    for R1 in "${R1_FILES[@]}"; do
+        R2="${R1%_R1.trimmed.fq.gz}_R2.trimmed.fq.gz"
+        [[ -s "$R1" && -s "$R2" ]] || {
+            echo "ERROR: archivo ausente o vacío en el par: $R1"
+            exit 1
+        }
+    done
+
+    for READ in R1 R2; do
+        [[ ! -e "$OUT_DIR/${SAMPLE}_${READ}.fq.gz" ]] || {
+            echo "ERROR: ya existe ${SAMPLE}_${READ}.fq.gz."
+            exit 1
+        }
+    done
+done
+
+# 7.3. Integrar cada muestra.
+## Los R2 se seleccionan siguiendo exactamente el orden de los R1.
+
+for SAMPLE in C{1..8}; do
+    R1_FILES=( "$IN_DIR"/${SAMPLE}_*_R1.trimmed.fq.gz(N) )
+    R2_FILES=()
+
+    for R1 in "${R1_FILES[@]}"; do
+        R2_FILES+=( "${R1%_R1.trimmed.fq.gz}_R2.trimmed.fq.gz" )
+    done
+
+    echo "Integrando: $SAMPLE"
+
+    cat "${R1_FILES[@]}" > "$OUT_DIR/${SAMPLE}_R1.fq.gz.part"
+    cat "${R2_FILES[@]}" > "$OUT_DIR/${SAMPLE}_R2.fq.gz.part"
+
+    # Comprobar la integridad gzip antes de dar por terminado el par.
+    gzip -t "$OUT_DIR/${SAMPLE}_R1.fq.gz.part"
+    gzip -t "$OUT_DIR/${SAMPLE}_R2.fq.gz.part"
+
+    mv "$OUT_DIR/${SAMPLE}_R1.fq.gz.part" "$OUT_DIR/${SAMPLE}_R1.fq.gz"
+    mv "$OUT_DIR/${SAMPLE}_R2.fq.gz.part" "$OUT_DIR/${SAMPLE}_R2.fq.gz"
+
+    echo "Completado: ${SAMPLE}_R1.fq.gz y ${SAMPLE}_R2.fq.gz"
+done
+
+echo "Integración completada: ocho muestras, 16 archivos finales."
+echo "Resultados: $OUT_DIR"
+ZSH
+
