@@ -3,6 +3,22 @@
 ## Antes de iniciar el análisis, verificaremos que los archivos descargados
 ## estén completos y no se hayan alterado durante su transferencia o copia.
 
+## Se secuenció ADN de ocho muestras (C1–C8) mediante la plataforma
+## Illumina NovaSeq X Plus, con lecturas pareadas compatibles con PE150
+## (150 nucleótidos por extremo, según las cifras del reporte).
+
+## Cada muestra se distribuyó en dos combinaciones de flowcell/carril:
+## 23K7VFLT4_L8 y 25HHV5LT4_L5.
+## Cada combinación generó un archivo R1 y un archivo R2,
+## dando un total de cuatro archivos por muestra y 32 archivos FASTQ.
+
+## Los datos originales están comprimidos en formato .fq.gz
+## y se encuentran en subcarpetas C1–C8 dentro de:
+## /Volumes/Respaldo/secuencias/Christopher/01.RawData
+
+## El análisis permitirá estimar la composición taxonómica
+## y el potencial funcional de las comunidades microbianas.
+
 ## El conjunto de datos contiene ocho muestras (C1–C8).
 ## Cada muestra tiene cuatro archivos FASTQ comprimidos (.fq.gz):
 ## dos lecturas pareadas (R1 y R2) por cada uno de los dos carriles
@@ -21,3 +37,306 @@
 
 ## La verificación se realizará sobre los archivos .fq.gz originales,
 ## sin descomprimirlos ni modificarlos.
+
+# 1. Verificación de la integridad de los archivos de secuenciación
+
+## 1.1. Ubicarnos en la carpeta que contiene las muestras C1–C8.
+## Las comillas permiten trabajar correctamente con rutas con espacios.
+
+cd "/Volumes/Respaldo/secuencias/Christopher/01.RawData"
+
+## 1.2. Confirmar nuestra ubicación.
+
+pwd
+
+## 1.3. Comprobar que existen los archivos MD5.txt de las ocho muestras.
+
+ls -l C{1..8}/MD5.txt
+
+## 1.4. Mostrar el archivo de C1 para identificar cómo están escritos
+## los valores MD5 y las rutas de los archivos que debemos verificar.
+## Este comando únicamente muestra el contenido; no modifica archivos.
+
+cat C1/MD5.txt
+
+# 1. Verificación de la integridad de los archivos de secuenciación
+
+## 1.5. Entrar a la carpeta de datos originales.
+
+cd "/Volumes/Respaldo/secuencias/Christopher/01.RawData"
+
+## 1.6. Comparar el MD5 de cada archivo con el proporcionado por Novogene.
+## Los archivos se leen comprimidos y por bloques para utilizar poca memoria.
+## Se omiten líneas vacías y se aceptan distintos tipos de espacios.
+## La comprobación puede tardar varios minutos porque lee los 32 archivos.
+
+python - <<'PY'
+from pathlib import Path
+import hashlib
+import sys
+
+raiz = Path("/Volumes/Respaldo/secuencias/Christopher/01.RawData")
+correctos = 0
+problemas = 0
+
+for numero in range(1, 9):
+    carpeta = raiz / f"C{numero}"
+    manifiesto = carpeta / "MD5.txt"
+    print(f"\nVerificando C{numero}...", flush=True)
+
+    if not manifiesto.is_file():
+        print("ERROR: no se encontró MD5.txt", flush=True)
+        problemas += 1
+        continue
+
+    registros = [
+        linea.strip()
+        for linea in manifiesto.read_text(encoding="utf-8-sig").splitlines()
+        if linea.strip()
+    ]
+
+    if len(registros) != 4:
+        print(f"AVISO: se esperaban 4 registros; se encontraron {len(registros)}.")
+        problemas += 1
+
+    for linea in registros:
+        campos = linea.split(maxsplit=1)
+
+        if len(campos) != 2:
+            print(f"ERROR: línea no reconocida: {linea}")
+            problemas += 1
+            continue
+
+        esperado, nombre = campos
+        nombre = nombre.lstrip("*")
+        archivo = carpeta / nombre
+
+        if not archivo.is_file():
+            print(f"NO ENCONTRADO: {nombre}", flush=True)
+            problemas += 1
+            continue
+
+        try:
+            huella = hashlib.md5()
+            with archivo.open("rb") as entrada:
+                for bloque in iter(lambda: entrada.read(8 * 1024 * 1024), b""):
+                    huella.update(bloque)
+
+            obtenido = huella.hexdigest()
+
+            if obtenido == esperado.lower():
+                print(f"OK: {nombre}", flush=True)
+                correctos += 1
+            else:
+                print(f"NO COINCIDE: {nombre}", flush=True)
+                print(f"  Esperado: {esperado}")
+                print(f"  Obtenido: {obtenido}")
+                problemas += 1
+
+        except OSError as error:
+            print(f"ERROR al leer {nombre}: {error}", flush=True)
+            problemas += 1
+
+print(f"\nArchivos correctos: {correctos}")
+print(f"Problemas detectados: {problemas}")
+
+if correctos == 32 and problemas == 0:
+    print("VERIFICACIÓN COMPLETA: los 32 archivos coinciden con los MD5 originales.")
+else:
+    print("REVISAR: la verificación no está completa o se detectaron problemas.")
+    sys.exit(1)
+PY
+
+# 2. Verificación de los programas para el control de calidad
+
+## La integridad de los 32 archivos fue confirmada mediante MD5.
+## El siguiente paso será evaluar la calidad de las lecturas
+## con FastQC y resumir los resultados con MultiQC.
+
+## 2.1. Mostrar los ambientes de Conda disponibles.
+## Esto permitirá identificar los ambientes utilizados
+## en el análisis metatranscriptómico anterior.
+
+conda env list
+
+## 2.2. Buscar FastQC y MultiQC en el ambiente actualmente activo.
+## Si no aparecen, revisaremos los otros ambientes antes de instalar.
+
+command -v fastqc
+command -v multiqc
+
+## 2.3. Consultar las versiones.
+## Si aparece "command not found", el programa no está disponible
+## en el ambiente activo; podría estar instalado en otro ambiente.
+
+fastqc --version
+multiqc --version
+
+#(base) bio2@bio2s-Mac-Studio 01.RawData % fastqc --version
+#multiqc --version
+#FastQC v0.12.1
+#multiqc, version 1.30
+
+
+# 3. Control de calidad inicial de las lecturas con FastQC
+
+## Evaluaremos los 32 archivos originales por separado:
+## ocho muestras, dos carriles por muestra y dos extremos por carril.
+## Los archivos .fq.gz se procesan directamente, sin descomprimirlos.
+## FastQC no modifica las secuencias originales.
+
+## 3.1. Ejecutar el análisis dentro de una sesión de zsh.
+## Si algún comando falla, el bloque se detendrá.
+
+zsh <<'ZSH'
+set -euo pipefail
+
+## 3.2. Definir la carpeta principal del proyecto.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+cd "$PROJECT_DIR"
+
+## 3.3. Crear una carpeta para los reportes de calidad inicial.
+
+OUT_DIR="$PROJECT_DIR/fastqc_raw"
+mkdir -p "$OUT_DIR"
+
+## 3.4. Localizar los archivos de las muestras C1–C8.
+## El patrón incluye los dos carriles y los extremos _1 y _2.
+
+RAW_FILES=( "$PROJECT_DIR"/01.RawData/C{1..8}/*.fq.gz(N) )
+
+## 3.5. Comprobar que se encontraron exactamente 32 archivos.
+
+echo "Archivos FASTQ encontrados: ${#RAW_FILES[@]}"
+
+if (( ${#RAW_FILES[@]} != 32 )); then
+    echo "ERROR: se esperaban 32 archivos. Revisar las carpetas."
+    exit 1
+fi
+
+## 3.6. Ejecutar FastQC.
+## -t 8 permite analizar hasta ocho archivos simultáneamente.
+## -o indica dónde guardar los reportes.
+
+fastqc -t 8 -o "$OUT_DIR" "${RAW_FILES[@]}"
+
+# 4. Integración de los reportes con MultiQC
+
+## MultiQC reunirá los resultados de los 32 archivos en un informe.
+## Esto permitirá comparar la calidad entre muestras y carriles.
+
+multiqc "$OUT_DIR" \
+    --outdir "$PROJECT_DIR/multiqc_raw" \
+    --filename multiqc_raw.html
+
+echo "Análisis completado."
+echo "Reporte: $PROJECT_DIR/multiqc_raw/multiqc_raw.html"
+ZSH
+
+# 4. Interpretación del control de calidad inicial
+
+## MultiQC integró los resultados de FastQC de los 32 archivos originales.
+## Todos los archivos presentaron lecturas de 150 nucleótidos.
+## La calidad media por posición se mantuvo aproximadamente entre
+## Q40.05 y Q40.63, sin una caída marcada hacia el extremo final.
+
+## Los 32 archivos aprobaron las evaluaciones de calidad por base,
+## calidad por lectura, contenido de N y contenido de adaptadores.
+## Ningún módulo presentó el estado FAIL.
+
+## Se observaron advertencias de calidad por tile, distribución de GC
+## y secuencias sobrerrepresentadas. Estas advertencias se interpretarán
+## considerando la naturaleza metagenómica de las muestras.
+
+## Se realizará una limpieza conservadora y posteriormente se evaluarán
+## la calidad y la proporción de lecturas retenidas.
+## No se eliminarán colas poli-A ni se filtrarán genes ribosomales.
+
+# 5. Verificación de Cutadapt
+
+## Identificar el ejecutable y consultar su versión.
+
+command -v cutadapt
+cutadapt --version
+
+# 5. Limpieza de las lecturas metagenómicas con Cutadapt 5.1
+
+## Se eliminarán los adaptadores Illumina cuando sean detectados.
+## Se recortarán extremos 3′ de baja calidad con un umbral Q20.
+## Se descartará el par si alguna lectura queda por debajo de 75 pb
+## o contiene más de un 1 % de bases ambiguas (N).
+## Se conservará la correspondencia entre R1 y R2.
+
+## No se realizará un recorte fijo del inicio de las lecturas.
+## No se eliminarán colas poli-A ni se aplicará filtrado de rRNA.
+
+zsh <<'ZSH'
+set -euo pipefail
+
+# 5.1. Definir las rutas del proyecto.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+IN_DIR="$PROJECT_DIR/01.RawData"
+OUT_DIR="$PROJECT_DIR/cutadapt_results"
+
+mkdir -p "$OUT_DIR"
+
+# 5.2. Registrar la versión utilizada.
+
+cutadapt --version > "$OUT_DIR/cutadapt_version.txt"
+
+# 5.3. Localizar los 16 archivos R1.
+## Cada R1 corresponde a una muestra y un carril.
+
+R1_FILES=( "$IN_DIR"/C{1..8}/*_1.fq.gz(N) )
+
+if (( ${#R1_FILES[@]} != 16 )); then
+    echo "ERROR: se esperaban 16 archivos R1; se encontraron ${#R1_FILES[@]}."
+    exit 1
+fi
+
+# 5.4. Verificar todos los pares antes de iniciar.
+
+for R1 in "${R1_FILES[@]}"; do
+    R2="${R1%_1.fq.gz}_2.fq.gz"
+    if [[ ! -f "$R2" ]]; then
+        echo "ERROR: falta el archivo R2: $R2"
+        exit 1
+    fi
+done
+
+# 5.5. Procesar cada par.
+## Se conservarán los identificadores de muestra, flowcell y carril.
+## Los resultados se guardarán comprimidos en una carpeta nueva.
+
+for R1 in "${R1_FILES[@]}"; do
+    R2="${R1%_1.fq.gz}_2.fq.gz"
+    BASE="${R1:t}"
+    BASE="${BASE%_1.fq.gz}"
+
+    echo "Procesando: $BASE"
+
+    cutadapt \
+        -j 8 \
+        -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
+        -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT \
+        -q 20 \
+        -m 75 \
+        --max-n 0.01 \
+        --trim-n \
+        --overlap 5 \
+        -e 0.1 \
+        --pair-filter=any \
+        --json "$OUT_DIR/${BASE}.cutadapt.json" \
+        -o "$OUT_DIR/${BASE}_R1.trimmed.fq.gz" \
+        -p "$OUT_DIR/${BASE}_R2.trimmed.fq.gz" \
+        "$R1" "$R2" \
+        > "$OUT_DIR/${BASE}.cutadapt.log" 2>&1
+
+    echo "Completado: $BASE"
+done
+
+echo "Limpieza completada para los 16 pares."
+echo "Resultados: $OUT_DIR"
+ZSH
