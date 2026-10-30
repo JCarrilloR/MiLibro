@@ -633,3 +633,312 @@ echo "MetaPhlAn completado para las ocho muestras."
 echo "Resultados: $OUT_DIR"
 ZSH
 
+# Consideración sobre el origen de las muestras
+
+## Las muestras C1–C8 provienen de biorreactores anaerobios.
+## El análisis se enfocará en la composición y el potencial funcional
+## de las comunidades microbianas presentes.
+
+## No se aplicará filtrado de ADN de hospedero de manera rutinaria.
+## Si el sustrato aporta cantidades importantes de ADN animal o vegetal,
+## se evaluará posteriormente la necesidad de un filtrado específico.
+
+## Las lecturas limpias e integradas se utilizarán para MetaPhlAn
+## y, posteriormente, para HUMAnN y la ruta de ensamblaje.
+
+# En Mac evitar el reposo durante el análisis con caffeinate
+
+## caffeinate -i mantiene el sistema despierto mientras se ejecuta
+## el comando que aparece a continuación.
+## Al finalizar ese comando, macOS recupera su comportamiento
+## habitual de reposo.
+
+## La pantalla puede apagarse sin detener el procesamiento.
+## caffeinate no aumenta los núcleos ni la memoria disponibles.
+## Tampoco protege contra desconexiones del disco, cortes de energía,
+## errores del programa o un reposo solicitado manualmente.
+
+# Nota sobre especies agrupadas en MetaPhlAn
+
+## Algunos clados representan varias especies agrupadas
+## bajo un mismo representante en la base de datos.
+## MetaPhlAn agrega una columna que identifica esas especies.
+## Su abundancia se interpretará como la del grupo representado,
+## sin atribuirla individualmente a cada especie de la lista.
+
+# 12. Verificación e integración de los perfiles taxonómicos de MetaPhlAn
+
+## Una vez finalizado el análisis de las ocho muestras (C1–C8),
+## se comprobará que cada archivo .profile.txt exista, tenga contenido
+## y presente al menos una fila de resultados distinta de los comentarios.
+## Esta comprobación básica no sustituye la revisión de los registros.
+
+## Los perfiles individuales se integrarán mediante
+## merge_metaphlan_tables.py, conservando el orden de C1 a C8.
+## Todas las muestras fueron analizadas con la misma versión
+## de MetaPhlAn y la misma base de datos.
+
+## La tabla resultante, metaphlan_merged.tsv, contendrá los taxones
+## en las filas y las muestras en las columnas, con sus abundancias
+## relativas expresadas en porcentaje.
+
+## La tabla incluye distintos niveles taxonómicos.
+## Para las gráficas y comparaciones se seleccionará un nivel a la vez,
+## evitando sumar abundancias de filos, géneros y especies entre sí.
+
+## Algunos clados representan varias especies agrupadas bajo
+## un mismo representante. Sus abundancias corresponden al grupo
+## y no pueden atribuirse por separado a cada especie agrupada.
+
+## La salida se escribirá primero en un archivo temporal y se renombrará
+## cuando la unión termine correctamente. Los perfiles individuales
+## se conservarán sin modificaciones.
+
+## Finalmente, se mostrarán las primeras líneas de la tabla integrada
+## para revisar su estructura antes de continuar con el análisis funcional.
+
+# 12. Integración de los perfiles taxonómicos
+
+## Se verificará que C1–C8 tengan perfiles con filas de resultados.
+## Después se combinarán usando la herramienta de MetaPhlAn.
+## Los perfiles individuales se conservarán sin modificaciones.
+
+conda activate meta4
+
+zsh <<'ZSH'
+set -euo pipefail
+
+OUT_DIR="/Volumes/Respaldo/secuencias/Christopher/metaphlan_results"
+
+# 12.1. Comprobar los ocho perfiles.
+
+for SAMPLE in C{1..8}; do
+    FILE="$OUT_DIR/${SAMPLE}.profile.txt"
+
+    [[ -s "$FILE" ]] || {
+        echo "ERROR: perfil ausente o vacío: $SAMPLE"
+        exit 1
+    }
+
+    awk '!/^#/ && NF > 0 {found=1} END {exit !found}' "$FILE" || {
+        echo "ERROR: el perfil de $SAMPLE no contiene resultados."
+        exit 1
+    }
+
+    echo "Perfil encontrado: $SAMPLE"
+done
+
+# 12.2. Unir los perfiles en orden C1–C8.
+## La salida se genera primero en un archivo temporal.
+
+merge_metaphlan_tables.py \
+    "$OUT_DIR"/C{1..8}.profile.txt \
+    > "$OUT_DIR/metaphlan_merged.tsv.tmp"
+
+mv "$OUT_DIR/metaphlan_merged.tsv.tmp" \
+   "$OUT_DIR/metaphlan_merged.tsv"
+
+# 12.3. Mostrar las primeras líneas de la tabla integrada.
+
+head -n 12 "$OUT_DIR/metaphlan_merged.tsv"
+
+echo "Tabla integrada: $OUT_DIR/metaphlan_merged.tsv"
+ZSH
+
+# 12.4. Revisión de la tabla taxonómica integrada
+
+## La tabla contiene las ocho muestras y 481 filas taxonómicas.
+## Incluye 91 grupos a nivel de género y 104 a nivel de especie,
+## considerando el conjunto de muestras.
+
+## La fracción estimada como UNCLASSIFIED varía entre 60.87 y 70.06 %.
+## Este valor no representa directamente el porcentaje de lecturas
+## sin alinear ni constituye, por sí solo, evidencia de contaminación.
+
+## Las arqueas predominan en la fracción clasificada.
+## Methanothrix soehngenii presenta abundancias de 15.76–20.91 %
+## en los perfiles originales.
+
+## Se conservará la categoría UNCLASSIFIED en los resultados.
+## Si se normaliza únicamente la fracción clasificada para una gráfica,
+## se indicará explícitamente ese cambio de denominador.
+
+## La ruta de ensamblaje permitirá complementar estos resultados
+## e investigar organismos poco representados por los marcadores.
+
+# Nota sobre la configuración del análisis funcional
+
+## Se utilizarán las lecturas de ADN limpias e integradas.
+## Se conservarán la búsqueda nucleotídica y la búsqueda traducida.
+## El perfil taxonómico individual se proporcionará mediante
+## --taxonomic-profile, evitando repetir el análisis de MetaPhlAn.
+
+## El valor threads = 1 mostrado por humann_config es el predeterminado.
+## En la ejecución se indicará --threads 12.
+
+## Las salidas describirán abundancia de genes y potencial metabólico,
+## no expresión génica ni actividad metabólica demostrada.
+
+# 13.1. Verificación de las bases de datos de HUMAnN
+
+## HUMAnN utilizará ChocoPhlAn para la búsqueda nucleotídica
+## y UniRef para la búsqueda traducida mediante DIAMOND.
+## Las rutas configuradas no garantizan que las bases estén completas.
+## Revisaremos su contenido sin modificar la instalación.
+
+conda activate humannpip
+
+# Mostrar el tamaño de cada carpeta.
+
+du -sh \
+  "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/chocophlan" \
+  "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref" \
+  "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/utility_mapping"
+
+# Mostrar algunos archivos de ChocoPhlAn.
+## Los nombres ayudarán a identificar la versión de la base.
+
+find "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/chocophlan" \
+  -type f | head -n 10
+
+# Identificar la base proteica instalada: UniRef50 o UniRef90.
+
+find "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref" \
+  -type f -name "*.dmnd" -print
+
+# Revisar los mapas funcionales disponibles para KO y EC.
+
+find "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/utility_mapping" \
+  -type f \( -iname "*ko*" -o -iname "*ec*" \) -print
+
+# 13.2. Comprobación de compatibilidad entre HUMAnN y MetaPhlAn
+
+## Las bases funcionales y los mapas UniRef50 → KO/EC están presentes.
+## Ahora revisaremos el encabezado del perfil taxonómico
+## y cómo HUMAnN reconoce la versión de la base de MetaPhlAn.
+## No se modificarán perfiles, programas ni bases de datos.
+
+conda activate humannpip
+
+# Mostrar el encabezado y las primeras filas del perfil de C1.
+
+head -n 8 \
+  "/Volumes/Respaldo/secuencias/Christopher/metaphlan_results/C1.profile.txt"
+
+# Consultar las líneas del código de HUMAnN que reconocen vJun23.
+
+python - <<'PY'
+from pathlib import Path
+import humann.search.prescreen as prescreen
+
+archivo = Path(prescreen.__file__)
+lineas = archivo.read_text().splitlines()
+
+print("\nArchivo de HUMAnN:", archivo)
+
+indices = set()
+for i, linea in enumerate(lineas):
+    if "vJun23" in linea:
+        indices.update(range(max(0, i - 5), min(len(lineas), i + 6)))
+
+for i in sorted(indices):
+    print(f"{i + 1}: {lineas[i]}")
+
+if not indices:
+    print("No se encontraron referencias a vJun23 en este archivo.")
+PY
+
+# 14. Análisis funcional de C1 con HUMAnN
+
+## Esta primera ejecución permitirá comprobar la compatibilidad
+## del perfil de MetaPhlAn y las bases funcionales instaladas.
+## Si finaliza correctamente, sus resultados se conservarán
+## y continuaremos con C2–C8.
+
+## Se utilizarán las lecturas de ADN limpias de ambos extremos.
+## Se mantendrán las búsquedas nucleotídica y traducida.
+## Las abundancias obtenidas describirán potencial funcional,
+## no expresión génica ni actividad metabólica demostrada.
+
+conda activate humannpip
+
+zsh <<'ZSH'
+set -euo pipefail
+
+# 14.1. Definir rutas y parámetros.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+READ_DIR="$PROJECT_DIR/merged_reads"
+INPUT_DIR="$PROJECT_DIR/humann_inputs"
+OUT_DIR="$PROJECT_DIR/humann_results/C1"
+PROFILE="$PROJECT_DIR/metaphlan_results/C1.profile.txt"
+
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+THREADS=12
+
+# Conservar primero los ejecutables del ambiente HUMAnN.
+# Añadir MetaPhlAn al final del PATH, por si HUMAnN lo consulta.
+export PATH="$PATH:/Users/bio2/miniconda/envs/meta4/bin"
+
+# 14.2. Verificar las entradas.
+
+for FILE in \
+    "$READ_DIR/C1_R1.fq.gz" \
+    "$READ_DIR/C1_R2.fq.gz" \
+    "$PROFILE"; do
+    [[ -s "$FILE" ]] || {
+        echo "ERROR: archivo ausente o vacío: $FILE"
+        exit 1
+    }
+done
+
+# Evitar mezclar esta prueba con resultados anteriores.
+
+if [[ -d "$OUT_DIR" ]]; then
+    echo "Ya existe $OUT_DIR. Revisar su contenido antes de continuar."
+    exit 1
+fi
+
+mkdir -p "$INPUT_DIR" "$OUT_DIR"
+
+# 14.3. Preparar una entrada conjunta para HUMAnN.
+## La concatenación conserva todas las lecturas de ambos extremos.
+## Los archivos R1 y R2 originales permanecen intactos.
+## Se necesita espacio adicional en el disco externo.
+
+INPUT="$INPUT_DIR/C1.fastq.gz"
+
+if [[ -e "$INPUT" ]]; then
+    echo "Ya existe $INPUT. Revisar antes de reutilizarlo."
+    exit 1
+fi
+
+echo "Preparando entrada conjunta de C1..."
+
+cat "$READ_DIR/C1_R1.fq.gz" "$READ_DIR/C1_R2.fq.gz" \
+    > "$INPUT_DIR/C1.partial.gz"
+
+gzip -t "$INPUT_DIR/C1.partial.gz"
+mv "$INPUT_DIR/C1.partial.gz" "$INPUT"
+
+# 14.4. Ejecutar HUMAnN.
+## --taxonomic-profile reutiliza el perfil individual de C1.
+## --search-mode uniref50 corresponde a la base proteica instalada.
+## caffeinate evita el reposo por inactividad.
+## tee muestra y guarda los mensajes de ejecución.
+
+caffeinate -i humann \
+    --input "$INPUT" \
+    --output "$OUT_DIR" \
+    --output-basename C1 \
+    --threads "$THREADS" \
+    --search-mode uniref50 \
+    --taxonomic-profile "$PROFILE" \
+    --nucleotide-database "$DB_ROOT/chocophlan" \
+    --protein-database "$DB_ROOT/uniref" \
+    2>&1 | tee "$OUT_DIR/C1.console.log"
+
+echo "HUMAnN completado para C1."
+ZSH
+
+
