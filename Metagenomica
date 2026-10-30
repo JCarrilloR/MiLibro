@@ -941,4 +941,66 @@ caffeinate -i humann \
 echo "HUMAnN completado para C1."
 ZSH
 
+# 14.6. Habilitar MetaPhlAn y retomar el análisis funcional de C1
+
+## MetaPhlAn funciona desde su ruta completa.
+## Añadiremos su carpeta al PATH, manteniendo primero HUMAnN
+## y las dependencias de su propio ambiente.
+## No se modificarán los programas ni los perfiles taxonómicos.
+
+conda activate humannpip
+
+zsh <<'ZSH'
+set -euo pipefail
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+THREADS=12
+
+# Añadir MetaPhlAn al PATH de esta ejecución.
+
+export PATH="/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# Comprobar que ambos programas pueden ejecutarse.
+
+command -v humann
+humann --version
+
+command -v metaphlan
+metaphlan --version
+
+# Comprobar la entrada conjunta y el perfil existentes.
+
+INPUT="$PROJECT_DIR/humann_inputs/C1.fastq.gz"
+PROFILE="$PROJECT_DIR/metaphlan_results/C1.profile.txt"
+OUT_DIR="$PROJECT_DIR/humann_results/C1"
+
+[[ -s "$INPUT" && -s "$PROFILE" ]] || {
+    echo "ERROR: falta la entrada conjunta o el perfil de C1."
+    exit 1
+}
+
+# Retomar HUMAnN.
+## --resume permite reutilizar los pasos intermedios completados.
+## El registro de consola tendrá un nombre nuevo para conservar
+## el registro del primer intento.
+
+caffeinate -i humann \
+    --input "$INPUT" \
+    --output "$OUT_DIR" \
+    --output-basename C1 \
+    --threads "$THREADS" \
+    --resume \
+    --search-mode uniref50 \
+    --taxonomic-profile "$PROFILE" \
+    --nucleotide-database "$DB_ROOT/chocophlan" \
+    --protein-database "$DB_ROOT/uniref" \
+    2>&1 | tee "$OUT_DIR/C1.retry_$(date +%Y%m%d_%H%M%S).console.log"
+
+echo "HUMAnN completado para C1."
+ZSH
+
+
+
 
