@@ -1302,4 +1302,13 @@ ZSH
 ## y los resultados para permitir la revisión y reanudación.
 ## Se comprobará nuevamente el espacio al terminar.
 
+# Pendiente: adaptación del flujo a supercómputo
+
+## Una vez finalizado y validado el análisis local, se adaptará
+## el script al gestor de trabajos del centro de supercómputo.
+## Se conservarán versiones, bases de datos y parámetros científicos.
+## Se ajustarán rutas, recursos, almacenamiento temporal
+## y distribución de las muestras entre nodos.
+
+
 
