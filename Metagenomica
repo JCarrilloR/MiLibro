@@ -811,158 +811,137 @@ find "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref" \
 find "/Users/bio2/miniconda/envs/humannpip/share/humann_databases/utility_mapping" \
   -type f \( -iname "*ko*" -o -iname "*ec*" \) -print
 
-# 13.2. Comprobación de compatibilidad entre HUMAnN y MetaPhlAn
 
-## Las bases funcionales y los mapas UniRef50 → KO/EC están presentes.
-## Ahora revisaremos el encabezado del perfil taxonómico
-## y cómo HUMAnN reconoce la versión de la base de MetaPhlAn.
-## No se modificarán perfiles, programas ni bases de datos.
+# 13.2. Configuración de compatibilidad entre HUMAnN y MetaPhlAn
+
+## Se utilizarán HUMAnN 3.9 y MetaPhlAn 4.2.4.
+## MetaPhlAn funciona correctamente, pero HUMAnN presentó el error:
+## "Can not call software version for metaphlan".
+
+## Se implementó un adaptador que consulta el ejecutable real
+## y devuelve únicamente la línea que contiene su versión.
+## No se escribe un número de versión fijo ni se modifican
+## las instalaciones o los perfiles taxonómicos.
+
+## Para cualquier otra operación, el adaptador ejecuta MetaPhlAn
+## mediante el Python de su propio ambiente.
 
 conda activate humannpip
 
-# Mostrar el encabezado y las primeras filas del perfil de C1.
+mkdir -p "/Volumes/Respaldo/secuencias/Christopher/bin_wrappers"
 
-head -n 8 \
-  "/Volumes/Respaldo/secuencias/Christopher/metaphlan_results/C1.profile.txt"
+cat > "/Volumes/Respaldo/secuencias/Christopher/bin_wrappers/metaphlan" <<'PY'
+#!/Users/bio2/miniconda/envs/meta4/bin/python
+import subprocess
+import sys
 
-# Consultar las líneas del código de HUMAnN que reconocen vJun23.
+comando = [
+    "/Users/bio2/miniconda/envs/meta4/bin/python",
+    "/Users/bio2/miniconda/envs/meta4/bin/metaphlan",
+]
+argumentos = sys.argv[1:]
 
-python - <<'PY'
-from pathlib import Path
-import humann.search.prescreen as prescreen
+if argumentos in (["--version"], ["-v"]):
+    resultado = subprocess.run(
+        comando + argumentos,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
-archivo = Path(prescreen.__file__)
-lineas = archivo.read_text().splitlines()
+    if resultado.returncode:
+        sys.stderr.write(resultado.stdout)
+        sys.exit(resultado.returncode)
 
-print("\nArchivo de HUMAnN:", archivo)
+    for linea in resultado.stdout.splitlines():
+        if linea.startswith("MetaPhlAn version "):
+            print(linea)
+            sys.exit(0)
 
-indices = set()
-for i, linea in enumerate(lineas):
-    if "vJun23" in linea:
-        indices.update(range(max(0, i - 5), min(len(lineas), i + 6)))
+    sys.stderr.write("No se pudo identificar la versión real de MetaPhlAn.\n")
+    sys.exit(1)
 
-for i in sorted(indices):
-    print(f"{i + 1}: {lineas[i]}")
-
-if not indices:
-    print("No se encontraron referencias a vJun23 en este archivo.")
+sys.exit(subprocess.call(comando + argumentos))
 PY
+
+chmod +x "/Volumes/Respaldo/secuencias/Christopher/bin_wrappers/metaphlan"
+
+# 13.3. Comprobar el adaptador.
+## Debe mostrar una sola línea con la versión real.
+
+"/Volumes/Respaldo/secuencias/Christopher/bin_wrappers/metaphlan" --version
+
+
 
 # 14. Análisis funcional de C1 con HUMAnN
 
-## Esta primera ejecución permitirá comprobar la compatibilidad
-## del perfil de MetaPhlAn y las bases funcionales instaladas.
+## Se analizará la muestra C1 completa para comprobar la compatibilidad
+## entre HUMAnN, el perfil de MetaPhlAn y las bases funcionales.
 ## Si finaliza correctamente, sus resultados se conservarán
-## y continuaremos con C2–C8.
+## y posteriormente se continuará con C2–C8.
 
 ## Se utilizarán las lecturas de ADN limpias de ambos extremos.
-## Se mantendrán las búsquedas nucleotídica y traducida.
+## Se conservarán las búsquedas nucleotídica y traducida.
 ## Las abundancias obtenidas describirán potencial funcional,
 ## no expresión génica ni actividad metabólica demostrada.
+
+## Software y bases identificados:
+## HUMAnN: versión 3.9.
+## MetaPhlAn: versión 4.2.4.
+## Base taxonómica: mpa_vJun23_CHOCOPhlAnSGB_202403.
+## Base nucleotídica funcional: ChocoPhlAn v201901_v31.
+## Base proteica: uniref50_201901b_full.dmnd.
+
+## Esta sección requiere el adaptador de MetaPhlAn creado en 13.2.
+## El adaptador devuelve la línea real de versión que HUMAnN necesita.
+## No modifica las instalaciones ni los perfiles taxonómicos.
 
 conda activate humannpip
 
 zsh <<'ZSH'
 set -euo pipefail
 
-# 14.1. Definir rutas y parámetros.
+## set -e detiene el bloque si falla un comando.
+## set -u detecta variables utilizadas sin definir.
+## pipefail permite detectar errores de HUMAnN aunque se utilice tee.
+
+# 14.1. Definir rutas y recursos.
 
 PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
 READ_DIR="$PROJECT_DIR/merged_reads"
 INPUT_DIR="$PROJECT_DIR/humann_inputs"
 OUT_DIR="$PROJECT_DIR/humann_results/C1"
+
 PROFILE="$PROJECT_DIR/metaphlan_results/C1.profile.txt"
-
-DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
-THREADS=12
-
-# Conservar primero los ejecutables del ambiente HUMAnN.
-# Añadir MetaPhlAn al final del PATH, por si HUMAnN lo consulta.
-export PATH="$PATH:/Users/bio2/miniconda/envs/meta4/bin"
-
-# 14.2. Verificar las entradas.
-
-for FILE in \
-    "$READ_DIR/C1_R1.fq.gz" \
-    "$READ_DIR/C1_R2.fq.gz" \
-    "$PROFILE"; do
-    [[ -s "$FILE" ]] || {
-        echo "ERROR: archivo ausente o vacío: $FILE"
-        exit 1
-    }
-done
-
-# Evitar mezclar esta prueba con resultados anteriores.
-
-if [[ -d "$OUT_DIR" ]]; then
-    echo "Ya existe $OUT_DIR. Revisar su contenido antes de continuar."
-    exit 1
-fi
-
-mkdir -p "$INPUT_DIR" "$OUT_DIR"
-
-# 14.3. Preparar una entrada conjunta para HUMAnN.
-## La concatenación conserva todas las lecturas de ambos extremos.
-## Los archivos R1 y R2 originales permanecen intactos.
-## Se necesita espacio adicional en el disco externo.
-
 INPUT="$INPUT_DIR/C1.fastq.gz"
 
-if [[ -e "$INPUT" ]]; then
-    echo "Ya existe $INPUT. Revisar antes de reutilizarlo."
-    exit 1
-fi
-
-echo "Preparando entrada conjunta de C1..."
-
-cat "$READ_DIR/C1_R1.fq.gz" "$READ_DIR/C1_R2.fq.gz" \
-    > "$INPUT_DIR/C1.partial.gz"
-
-gzip -t "$INPUT_DIR/C1.partial.gz"
-mv "$INPUT_DIR/C1.partial.gz" "$INPUT"
-
-# 14.4. Ejecutar HUMAnN.
-## --taxonomic-profile reutiliza el perfil individual de C1.
-## --search-mode uniref50 corresponde a la base proteica instalada.
-## caffeinate evita el reposo por inactividad.
-## tee muestra y guarda los mensajes de ejecución.
-
-caffeinate -i humann \
-    --input "$INPUT" \
-    --output "$OUT_DIR" \
-    --output-basename C1 \
-    --threads "$THREADS" \
-    --search-mode uniref50 \
-    --taxonomic-profile "$PROFILE" \
-    --nucleotide-database "$DB_ROOT/chocophlan" \
-    --protein-database "$DB_ROOT/uniref" \
-    2>&1 | tee "$OUT_DIR/C1.console.log"
-
-echo "HUMAnN completado para C1."
-ZSH
-
-# 14.6. Habilitar MetaPhlAn y retomar el análisis funcional de C1
-
-## MetaPhlAn funciona desde su ruta completa.
-## Añadiremos su carpeta al PATH, manteniendo primero HUMAnN
-## y las dependencias de su propio ambiente.
-## No se modificarán los programas ni los perfiles taxonómicos.
-
-conda activate humannpip
-
-zsh <<'ZSH'
-set -euo pipefail
-
-PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
 DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+WRAPPER="$PROJECT_DIR/bin_wrappers/metaphlan"
+
 THREADS=12
 
-# Añadir MetaPhlAn al PATH de esta ejecución.
+## Se utilizarán 12 trabajadores.
+## El consumo real de CPU dependerá de la etapa del análisis,
+## la compresión de archivos y la velocidad del disco.
 
-export PATH="/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+# 14.2. Verificar el adaptador de MetaPhlAn.
+
+[[ -x "$WRAPPER" ]] || {
+    echo "ERROR: falta el adaptador ejecutable: $WRAPPER"
+    echo "Completar primero la sección 13.2."
+    exit 1
+}
+
+# 14.3. Configurar el PATH para esta ejecución.
+
+## El adaptador debe aparecer antes que el MetaPhlAn original.
+## Después se priorizan HUMAnN y las dependencias de humannpip.
+## La modificación del PATH solo afecta a esta sesión de zsh.
+
+export PATH="$PROJECT_DIR/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
 rehash
 
-# Comprobar que ambos programas pueden ejecutarse.
+# 14.4. Comprobar los programas.
 
 command -v humann
 humann --version
@@ -970,21 +949,137 @@ humann --version
 command -v metaphlan
 metaphlan --version
 
-# Comprobar la entrada conjunta y el perfil existentes.
+command -v diamond
+diamond --version
 
-INPUT="$PROJECT_DIR/humann_inputs/C1.fastq.gz"
-PROFILE="$PROJECT_DIR/metaphlan_results/C1.profile.txt"
-OUT_DIR="$PROJECT_DIR/humann_results/C1"
+command -v bowtie2
+bowtie2 --version
 
-[[ -s "$INPUT" && -s "$PROFILE" ]] || {
-    echo "ERROR: falta la entrada conjunta o el perfil de C1."
+# 14.5. Verificar los archivos de entrada.
+
+## Se requieren los dos extremos de C1 y su perfil taxonómico individual.
+## No se utiliza la tabla combinada metaphlan_merged.tsv.
+
+for FILE in \
+    "$READ_DIR/C1_R1.fq.gz" \
+    "$READ_DIR/C1_R2.fq.gz" \
+    "$PROFILE"; do
+
+    [[ -s "$FILE" ]] || {
+        echo "ERROR: archivo ausente o vacío: $FILE"
+        exit 1
+    }
+done
+
+# 14.6. Comprobar las rutas de las bases funcionales.
+
+[[ -d "$DB_ROOT/chocophlan" ]] || {
+    echo "ERROR: no se encontró la carpeta de ChocoPhlAn."
     exit 1
 }
 
-# Retomar HUMAnN.
-## --resume permite reutilizar los pasos intermedios completados.
-## El registro de consola tendrá un nombre nuevo para conservar
-## el registro del primer intento.
+[[ -s "$DB_ROOT/uniref/uniref50_201901b_full.dmnd" ]] || {
+    echo "ERROR: no se encontró la base UniRef50 esperada."
+    exit 1
+}
+
+## Estas comprobaciones verifican disponibilidad básica.
+## La validación interna de las bases se realizará al ejecutar HUMAnN.
+
+# 14.7. Evitar repetir una ejecución con las tres tablas principales.
+
+## La existencia de las tablas no sustituye la revisión del registro
+## y de las estadísticas de asignación funcional.
+
+if [[ -s "$OUT_DIR/C1_genefamilies.tsv" &&
+      -s "$OUT_DIR/C1_pathabundance.tsv" &&
+      -s "$OUT_DIR/C1_pathcoverage.tsv" ]]; then
+
+    echo "C1 ya tiene las tres tablas principales."
+    echo "Revisar los resultados antes de repetir el análisis."
+    exit 0
+fi
+
+mkdir -p "$INPUT_DIR" "$OUT_DIR"
+
+# 14.8. Preparar la entrada conjunta de C1.
+
+## HUMAnN recibirá un archivo con todas las lecturas R1 y R2.
+## La concatenación no ensambla contigs ni fusiona secuencias.
+## Las lecturas se analizarán como secuencias individuales.
+## Los archivos R1 y R2 originales permanecerán intactos.
+
+## Si la entrada conjunta ya existe y tiene contenido,
+## se reutilizará para evitar repetir su preparación.
+## Se asume que corresponde a las mismas entradas verificadas.
+
+if [[ -e "$INPUT" ]]; then
+
+    [[ -s "$INPUT" ]] || {
+        echo "ERROR: la entrada conjunta existe, pero está vacía."
+        exit 1
+    }
+
+    echo "Reutilizando: $INPUT"
+
+else
+
+    echo "Preparando entrada conjunta de C1..."
+
+    ## Se escribe primero un archivo provisional.
+    ## cat concatena los archivos gzip sin descomprimirlos.
+
+    cat "$READ_DIR/C1_R1.fq.gz" "$READ_DIR/C1_R2.fq.gz" \
+        > "$INPUT_DIR/C1.partial.gz"
+
+    ## Comprobar que el archivo comprimido puede leerse completo.
+    ## Esta comprobación puede tardar varios minutos.
+
+    gzip -t "$INPUT_DIR/C1.partial.gz"
+
+    ## Asignar el nombre definitivo solo si la comprobación termina bien.
+
+    mv "$INPUT_DIR/C1.partial.gz" "$INPUT"
+fi
+
+# 14.9. Registrar versiones y parámetros.
+
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+{
+    humann --version
+    metaphlan --version
+    diamond --version
+    bowtie2 --version
+} > "$OUT_DIR/C1.versions_${RUN_ID}.txt" 2>&1
+
+{
+    printf 'Input: %s\n' "$INPUT"
+    printf 'Taxonomic profile: %s\n' "$PROFILE"
+    printf 'Nucleotide database: %s\n' "$DB_ROOT/chocophlan"
+    printf 'Protein database: %s\n' "$DB_ROOT/uniref"
+    printf 'Search mode: uniref50\n'
+    printf 'Threads: %s\n' "$THREADS"
+    printf 'MetaPhlAn adapter: %s\n' "$WRAPPER"
+} > "$OUT_DIR/C1.parameters_${RUN_ID}.txt"
+
+# 14.10. Ejecutar o retomar HUMAnN.
+
+## --taxonomic-profile reutiliza el perfil taxonómico de C1.
+## --search-mode uniref50 corresponde a la base proteica instalada.
+## --output-basename C1 establece el prefijo de los resultados.
+
+## --resume permite reutilizar pasos intermedios completados.
+## Solo debe emplearse manteniendo las mismas entradas,
+## bases de datos y parámetros del análisis anterior.
+
+## No se omiten la búsqueda nucleotídica ni la traducida.
+## HUMAnN buscará primero contra los pangenomas seleccionados
+## y después procesará las lecturas restantes mediante DIAMOND.
+
+## caffeinate -i evita el reposo por inactividad durante la ejecución.
+## tee muestra los mensajes en pantalla y guarda un registro nuevo.
+## Los registros de intentos anteriores se conservarán.
 
 caffeinate -i humann \
     --input "$INPUT" \
@@ -996,11 +1091,215 @@ caffeinate -i humann \
     --taxonomic-profile "$PROFILE" \
     --nucleotide-database "$DB_ROOT/chocophlan" \
     --protein-database "$DB_ROOT/uniref" \
-    2>&1 | tee "$OUT_DIR/C1.retry_$(date +%Y%m%d_%H%M%S).console.log"
+    2>&1 | tee "$OUT_DIR/C1.console_${RUN_ID}.log"
+
+# 14.11. Comprobar las salidas principales.
+
+## genefamilies: abundancia de familias génicas.
+## pathabundance: abundancia estimada de rutas metabólicas.
+## pathcoverage: medida de cobertura de rutas inferida por HUMAnN.
+## Las abundancias no deben interpretarse como porcentajes
+## hasta realizar la normalización correspondiente.
+
+for TABLE in genefamilies pathabundance pathcoverage; do
+    FILE="$OUT_DIR/C1_${TABLE}.tsv"
+
+    [[ -s "$FILE" ]] || {
+        echo "ERROR: no se encontró la salida esperada: $FILE"
+        exit 1
+    }
+
+    echo "Salida encontrada: $FILE"
+done
 
 echo "HUMAnN completado para C1."
+echo "Revisar el registro y las estadísticas antes de continuar con C2–C8."
 ZSH
 
+# 15. Análisis funcional de C2–C8 con HUMAnN
 
+## Se utilizará la misma configuración funcional empleada para C1.
+## El número de hilos aumentará de 12 a 16.
+## Las muestras se procesarán una después de otra,
+## evitando ejecutar siete análisis de 16 hilos simultáneamente.
+
+## Se conservarán las búsquedas nucleotídica y traducida.
+## Cada muestra utilizará su propio perfil de MetaPhlAn.
+## El adaptador de compatibilidad permanecerá al inicio del PATH.
+
+## Ejecutar únicamente después de que C1 termine correctamente.
+## Mantener la terminal abierta y el disco externo conectado.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+# 15.1. Definir rutas y recursos.
+
+PROJECT_DIR="/Volumes/Respaldo/secuencias/Christopher"
+READ_DIR="$PROJECT_DIR/merged_reads"
+INPUT_DIR="$PROJECT_DIR/humann_inputs"
+OUT_ROOT="$PROJECT_DIR/humann_results"
+PROFILE_DIR="$PROJECT_DIR/metaphlan_results"
+
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+WRAPPER="$PROJECT_DIR/bin_wrappers/metaphlan"
+
+THREADS=16
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# 15.2. Configurar los ejecutables.
+
+export PATH="$PROJECT_DIR/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+[[ -x "$WRAPPER" ]] || {
+    echo "ERROR: falta el adaptador de MetaPhlAn."
+    exit 1
+}
+
+humann --version
+metaphlan --version
+diamond --version
+
+# 15.3. Comprobar que C1 generó sus tres tablas principales.
+
+for TABLE in genefamilies pathabundance pathcoverage; do
+    [[ -s "$OUT_ROOT/C1/C1_${TABLE}.tsv" ]] || {
+        echo "ERROR: falta C1_${TABLE}.tsv."
+        echo "Esperar a que C1 termine y revisar su ejecución."
+        exit 1
+    }
+done
+
+# 15.4. Verificar todas las entradas antes de iniciar.
+
+for SAMPLE in C{2..8}; do
+    for FILE in \
+        "$READ_DIR/${SAMPLE}_R1.fq.gz" \
+        "$READ_DIR/${SAMPLE}_R2.fq.gz" \
+        "$PROFILE_DIR/${SAMPLE}.profile.txt"; do
+
+        [[ -s "$FILE" ]] || {
+            echo "ERROR: archivo ausente o vacío: $FILE"
+            exit 1
+        }
+    done
+done
+
+mkdir -p "$INPUT_DIR" "$OUT_ROOT"
+
+# Registrar las versiones utilizadas durante esta ejecución.
+
+{
+    humann --version
+    metaphlan --version
+    diamond --version
+    bowtie2 --version
+} > "$OUT_ROOT/versions_C2_C8_${RUN_ID}.txt" 2>&1
+
+# 15.5. Procesar las muestras sucesivamente.
+
+for SAMPLE in C{2..8}; do
+
+    INPUT="$INPUT_DIR/${SAMPLE}.fastq.gz"
+    PROFILE="$PROFILE_DIR/${SAMPLE}.profile.txt"
+    SAMPLE_OUT="$OUT_ROOT/$SAMPLE"
+
+    # Omitir muestras que ya tengan las tres tablas principales.
+    ## Las tablas y sus registros deberán revisarse posteriormente.
+
+    if [[ -s "$SAMPLE_OUT/${SAMPLE}_genefamilies.tsv" &&
+          -s "$SAMPLE_OUT/${SAMPLE}_pathabundance.tsv" &&
+          -s "$SAMPLE_OUT/${SAMPLE}_pathcoverage.tsv" ]]; then
+
+        echo "Se omite $SAMPLE: ya tiene las tres tablas principales."
+        continue
+    fi
+
+    mkdir -p "$SAMPLE_OUT"
+
+    # 15.6. Preparar la entrada conjunta.
+    ## Se concatenan R1 y R2 sin ensamblar ni fusionar secuencias.
+    ## Se conserva una copia adicional comprimida por muestra.
+    ## HUMAnN también generará archivos temporales descomprimidos;
+    ## debe existir suficiente espacio libre en el disco.
+
+    if [[ -e "$INPUT" ]]; then
+
+        [[ -s "$INPUT" ]] || {
+            echo "ERROR: entrada conjunta vacía: $INPUT"
+            exit 1
+        }
+
+        echo "Reutilizando entrada conjunta: $SAMPLE"
+
+    else
+
+        echo "Preparando entrada conjunta: $SAMPLE"
+
+        cat "$READ_DIR/${SAMPLE}_R1.fq.gz" \
+            "$READ_DIR/${SAMPLE}_R2.fq.gz" \
+            > "$INPUT_DIR/${SAMPLE}.partial.gz"
+
+        gzip -t "$INPUT_DIR/${SAMPLE}.partial.gz"
+
+        mv "$INPUT_DIR/${SAMPLE}.partial.gz" "$INPUT"
+    fi
+
+    # 15.7. Registrar parámetros e inicio.
+
+    {
+        printf 'Input: %s\n' "$INPUT"
+        printf 'Taxonomic profile: %s\n' "$PROFILE"
+        printf 'Nucleotide database: %s\n' "$DB_ROOT/chocophlan"
+        printf 'Protein database: %s\n' "$DB_ROOT/uniref"
+        printf 'Search mode: uniref50\n'
+        printf 'Threads: %s\n' "$THREADS"
+    } > "$SAMPLE_OUT/${SAMPLE}.parameters_${RUN_ID}.txt"
+
+    echo "Iniciando HUMAnN: $SAMPLE — $(date)"
+
+    # 15.8. Ejecutar o retomar el análisis.
+    ## --resume reutiliza pasos completados con las mismas entradas
+    ## y parámetros de análisis.
+    ## tee guarda un registro independiente para cada muestra.
+    ## Si HUMAnN falla, el bloque se detendrá antes de la siguiente muestra.
+
+    humann \
+        --input "$INPUT" \
+        --output "$SAMPLE_OUT" \
+        --output-basename "$SAMPLE" \
+        --threads "$THREADS" \
+        --resume \
+        --search-mode uniref50 \
+        --taxonomic-profile "$PROFILE" \
+        --nucleotide-database "$DB_ROOT/chocophlan" \
+        --protein-database "$DB_ROOT/uniref" \
+        2>&1 | tee "$SAMPLE_OUT/${SAMPLE}.console_${RUN_ID}.log"
+
+    # 15.9. Comprobar las tres salidas principales.
+
+    for TABLE in genefamilies pathabundance pathcoverage; do
+        [[ -s "$SAMPLE_OUT/${SAMPLE}_${TABLE}.tsv" ]] || {
+            echo "ERROR: falta ${SAMPLE}_${TABLE}.tsv."
+            exit 1
+        }
+    done
+
+    echo "Completado: $SAMPLE — $(date)"
+done
+
+echo "Procesamiento de C2–C8 finalizado — $(date)"
+ZSH
+
+# Nota sobre almacenamiento disponible
+
+## Antes de procesar C2–C8, el disco presentó 982 GiB libres
+## y una ocupación del 49 %.
+## Se conservarán las entradas conjuntas, los archivos temporales
+## y los resultados para permitir la revisión y reanudación.
+## Se comprobará nuevamente el espacio al terminar.
 
 
