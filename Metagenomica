@@ -1115,7 +1115,24 @@ done
 echo "HUMAnN completado para C1."
 echo "Revisar el registro y las estadísticas antes de continuar con C2–C8."
 ZSH
+# Nota sobre la duración de la búsqueda funcional de C1
 
+## HUMAnN recibió 76,089,028 lecturas individuales.
+## Bowtie2 presentó un alineamiento inicial del 15.23 %.
+## Después del filtrado nucleotídico, el 84.80 % de las lecturas
+## permaneció sin asignación: aproximadamente 64.5 millones.
+
+## Estas lecturas se procesan con DIAMOND blastx en modo sensible
+## contra la base UniRef50 completa, utilizando 12 hilos.
+## El elevado volumen de búsqueda explica una duración de varias horas.
+
+## El perfil taxonómico fue aceptado.
+## De 52 grupos candidatos del prescreen, se incorporaron
+## 10 pangenomas disponibles en la base funcional instalada.
+
+## La fracción sin asignación nucleotídica no debe confundirse
+## con UNCLASSIFIED de MetaPhlAn: son métricas diferentes.
+## La asignación funcional final se evaluará cuando termine DIAMOND.
 # 15. Análisis funcional de C2–C8 con HUMAnN
 
 ## Se utilizará la misma configuración funcional empleada para C1.
@@ -1267,7 +1284,7 @@ for SAMPLE in C{2..8}; do
     ## tee guarda un registro independiente para cada muestra.
     ## Si HUMAnN falla, el bloque se detendrá antes de la siguiente muestra.
 
-    humann \
+    /usr/bin/time -l humann \
         --input "$INPUT" \
         --output "$SAMPLE_OUT" \
         --output-basename "$SAMPLE" \
