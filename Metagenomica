@@ -1130,9 +1130,43 @@ ZSH
 ## De 52 grupos candidatos del prescreen, se incorporaron
 ## 10 pangenomas disponibles en la base funcional instalada.
 
+
+# 14.12. Resultado del análisis funcional de C1
+
+## HUMAnN completó las búsquedas nucleotídica y traducida,
+## la cuantificación de familias génicas y el cálculo de rutas.
+## Se generaron las tablas:
+## C1_genefamilies.tsv
+## C1_pathabundance.tsv
+## C1_pathcoverage.tsv
+
+## Se reportaron 565,083 familias génicas después del alineamiento
+## traducido y un 49.14 % de lecturas sin asignación funcional final.
+
+## La categoría unclassified contiene asignaciones funcionales
+## sin atribución taxonómica específica.
+## No debe confundirse con UNMAPPED ni con UNCLASSIFIED de MetaPhlAn.
+
+## La presencia de genes y rutas representa potencial funcional.
+## No demuestra expresión génica ni actividad metabólica.
 ## La fracción sin asignación nucleotídica no debe confundirse
 ## con UNCLASSIFIED de MetaPhlAn: son métricas diferentes.
 ## La asignación funcional final se evaluará cuando termine DIAMOND.
+# Nota de rendimiento: muestra C1
+
+## El procesamiento desde la creación de la base personalizada
+## hasta las tablas finales duró aproximadamente 19 h 26 min.
+## La búsqueda traducida con DIAMOND requirió 68,119 segundos:
+## 18 h 55 min 19 s, aproximadamente el 97.8 % del intervalo.
+
+## Esta ejecución utilizó 12 hilos y UniRef50 201901b completa.
+## DIAMOND constituye el principal consumo de tiempo del flujo.
+
+## C2–C8 se ejecutarán sucesivamente con 16 hilos.
+## Su duración dependerá del volumen de lecturas y de la fracción
+## que permanezca sin asignación después de la búsqueda nucleotídica.
+## Se registrarán tiempos y recursos con /usr/bin/time -l.
+
 # 15. Análisis funcional de C2–C8 con HUMAnN
 
 ## Se utilizará la misma configuración funcional empleada para C1.
