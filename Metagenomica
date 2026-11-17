@@ -1626,3 +1626,254 @@ tail -n 30 "$LOG"
 
 df -h "$PROYECTO" /System/Volumes/Data
 ZSH
+
+# 24. Completar DIAMOND por fragmentos para C5.
+## Conservar el primer fragmento ya completado.
+## Procesar dos millones de lecturas por ejecución, con 12 hilos.
+## Permitir retomar la serie mediante las marcas .done.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+CHUNKS="$PROYECTO/diamond_chunks/C5"
+RESULTADOS="$PROYECTO/diamond_chunk_results/C5"
+DB="/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref/uniref50_201901b_full.dmnd"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# 24.1. Evitar análisis simultáneos y comprobar la base.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+[[ -s "$DB" ]] || {
+    echo "ERROR: falta la base UniRef50."
+    exit 1
+}
+
+# 24.2. Preparar los fragmentos restantes.
+## Si existe el manifiesto completo, comprobarlo y reutilizarlo.
+## No cargar el FASTA completo en memoria.
+
+python - <<'PY'
+from pathlib import Path
+import csv
+import hashlib
+
+p = Path("/Volumes/Respaldo/secuencias/Christopher")
+original = p / "humann_results/C5/C5_humann_temp/C5_bowtie2_unaligned.fa"
+chunks = p / "diamond_chunks/C5"
+resultados = p / "diamond_chunk_results/C5"
+manifest = chunks / "manifest.tsv"
+primero = chunks / "C5.part_0001.fa"
+
+if not primero.is_file():
+    raise SystemExit("ERROR: falta el primer fragmento.")
+
+for archivo in (
+    resultados / "alignments/C5.part_0001.m8",
+    resultados / "completed/C5.part_0001.done",
+):
+    if not archivo.is_file():
+        raise SystemExit(f"ERROR: falta el resultado o marca de la prueba: {archivo}")
+
+def digest(ruta):
+    h = hashlib.sha256()
+    with ruta.open("rb") as archivo:
+        for bloque in iter(lambda: archivo.read(1024 * 1024), b""):
+            h.update(bloque)
+    return h.hexdigest()
+
+if manifest.exists():
+    with manifest.open(newline="") as archivo:
+        filas = list(csv.DictReader(archivo, delimiter="\t"))
+
+    if not filas or len({f["archivo"] for f in filas}) != len(filas):
+        raise SystemExit("ERROR: manifiesto vacío o con duplicados.")
+
+    for i, fila in enumerate(filas, 1):
+        if fila["archivo"] != f"C5.part_{i:04d}.fa":
+            raise SystemExit("ERROR: orden inesperado en el manifiesto.")
+        n = int(fila["lecturas"])
+        if not 0 < n <= 2_000_000 or (i < len(filas) and n != 2_000_000):
+            raise SystemExit("ERROR: tamaño inesperado de fragmento.")
+        ruta = chunks / fila["archivo"]
+        if not ruta.is_file() or digest(ruta) != fila["sha256"]:
+            raise SystemExit(f"ERROR: fragmento ausente o modificado: {ruta}")
+
+    print(f"Manifiesto verificado: {len(filas)} fragmentos.", flush=True)
+
+else:
+    if not original.is_file():
+        raise SystemExit("ERROR: falta el FASTA original.")
+
+    staging = chunks / "preparacion_restantes"
+    if staging.exists():
+        raise SystemExit("ERROR: existe una preparación incompleta; revisar antes de repetir.")
+
+    if any(chunks.glob("C5.part_*.fa.partial")) or any(
+        ruta.name != primero.name for ruta in chunks.glob("C5.part_*.fa")
+    ):
+        raise SystemExit("ERROR: hay fragmentos previos sin manifiesto; revisar.")
+
+    staging.mkdir()
+    filas = []
+    archivo = None
+    h = None
+    total = 0
+    cantidad = 0
+    parte = 0
+
+    try:
+        with original.open("rb") as entrada:
+            for linea in entrada:
+                if linea.startswith(b">"):
+                    if total % 2_000_000 == 0:
+                        if h is not None:
+                            if archivo is not None:
+                                archivo.close()
+                            filas.append((nombre, cantidad, h.hexdigest()))
+
+                        parte += 1
+                        nombre = f"C5.part_{parte:04d}.fa"
+                        cantidad = 0
+                        h = hashlib.sha256()
+                        archivo = None if parte == 1 else (staging / nombre).open("xb")
+
+                    total += 1
+                    cantidad += 1
+
+                elif h is None:
+                    raise ValueError("El archivo no empieza con un encabezado FASTA.")
+
+                h.update(linea)
+                if archivo is not None:
+                    archivo.write(linea)
+
+        if h is not None:
+            if archivo is not None:
+                archivo.close()
+            filas.append((nombre, cantidad, h.hexdigest()))
+
+    finally:
+        if archivo is not None and not archivo.closed:
+            archivo.close()
+
+    if not filas or filas[0][1] != 2_000_000:
+        raise SystemExit("ERROR: tamaño inesperado del primer fragmento.")
+
+    if filas[0][2] != digest(primero):
+        raise SystemExit("ERROR: el primer fragmento no coincide con el FASTA original.")
+
+    for nombre, _, _ in filas[1:]:
+        destino = chunks / nombre
+        if destino.exists():
+            raise SystemExit(f"ERROR: ya existe {destino}")
+        (staging / nombre).rename(destino)
+
+    pendiente = chunks / "manifest.tsv.partial"
+    with pendiente.open("x", newline="") as archivo:
+        escritor = csv.writer(archivo, delimiter="\t", lineterminator="\n")
+        escritor.writerow(["archivo", "lecturas", "sha256"])
+        escritor.writerows(filas)
+    pendiente.rename(manifest)
+    staging.rmdir()
+
+    print(f"Fragmentos preparados: {len(filas)}", flush=True)
+    print(f"Lecturas distribuidas: {total:,}", flush=True)
+    print("Primer fragmento verificado y conservado.", flush=True)
+PY
+
+# 24.3. Comprobar que mantenemos los parámetros de la prueba.
+
+EXPECTED="$(printf '%s\n' \
+    "database=$DB" \
+    "threads=12" \
+    "reads_per_chunk=2000000" \
+    "options=--evalue 1.0 --top 1 --sensitive --block-size 0.25 --index-chunks 8 --outfmt 6")"
+
+[[ "$(<"$RESULTADOS/C5.pilot_parameters.txt")" == "$EXPECTED" ]] || {
+    echo "ERROR: los parámetros no coinciden con la prueba."
+    exit 1
+}
+
+TOTAL=$(awk 'END {print NR-1}' "$CHUNKS/manifest.tsv")
+CONTADOR=0
+
+# 24.4. Ejecutar los fragmentos pendientes en serie.
+
+while IFS=$'\t' read -r ARCHIVO LECTURAS SHA256; do
+    [[ "$ARCHIVO" == "archivo" ]] && continue
+
+    CONTADOR=$((CONTADOR + 1))
+    NOMBRE="${ARCHIVO%.fa}"
+    SALIDA="$RESULTADOS/alignments/${NOMBRE}.m8"
+    DONE="$RESULTADOS/completed/${NOMBRE}.done"
+
+    if [[ -f "$DONE" ]]; then
+        [[ -f "$SALIDA" ]] || {
+            echo "ERROR: existe marca .done pero falta $SALIDA"
+            exit 1
+        }
+        echo "Conservado [$CONTADOR/$TOTAL]: $NOMBRE"
+        continue
+    fi
+
+    [[ ! -e "$SALIDA" ]] || {
+        echo "ERROR: resultado sin marca .done: $SALIDA"
+        exit 1
+    }
+
+    PARCIAL="$RESULTADOS/alignments/${NOMBRE}.${RUN_ID}.partial"
+    LOG="$RESULTADOS/logs/${NOMBRE}.${RUN_ID}.log"
+    TMP="$RESULTADOS/tmp/${NOMBRE}.${RUN_ID}"
+    mkdir -p "$TMP"
+
+    echo "Iniciando [$CONTADOR/$TOTAL]: $NOMBRE — $(date)"
+    echo "Lecturas: $LECTURAS"
+
+    /usr/bin/time -l diamond blastx \
+        --query "$CHUNKS/$ARCHIVO" \
+        --db "$DB" \
+        --out "$PARCIAL" \
+        --outfmt 6 \
+        --evalue 1.0 \
+        --threads 12 \
+        --top 1 \
+        --sensitive \
+        --block-size 0.25 \
+        --index-chunks 8 \
+        --tmpdir "$TMP" \
+        > "$LOG" 2>&1
+
+    # Validar las 12 columnas; aceptar resultados vacíos.
+
+    awk -F '\t' '
+        NF != 12 {fallo=1; exit}
+        END {exit fallo}
+    ' "$PARCIAL"
+
+    mv "$PARCIAL" "$SALIDA"
+
+    {
+        echo "fragmento=$ARCHIVO"
+        echo "lecturas=$LECTURAS"
+        echo "finalizado=$(date)"
+    } > "$DONE"
+
+    echo "Completado [$CONTADOR/$TOTAL]: $NOMBRE — $(date)"
+
+done < "$CHUNKS/manifest.tsv"
+
+echo "DIAMOND completado para todos los fragmentos de C5."
+echo "Alineamientos: $RESULTADOS/alignments"
+echo "Registros: $RESULTADOS/logs"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
+
