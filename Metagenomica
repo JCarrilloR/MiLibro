@@ -1361,5 +1361,134 @@ ZSH
 ## Se ajustarán rutas, recursos, almacenamiento temporal
 ## y distribución de las muestras entre nodos.
 
+# 22. Preparar C5 mediante alineamiento nucleotídico.
+## No ejecutar todavía DIAMOND sobre la muestra completa.
+## Después dividiremos las lecturas pendientes en fragmentos
+## de dos millones para probar tiempo y memoria.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+# 22.1. Definir rutas.
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+
+READ_DIR="$PROYECTO/merged_reads"
+INPUT_DIR="$PROYECTO/humann_inputs"
+INPUT="$INPUT_DIR/C5.fastq.gz"
+PROFILE="$PROYECTO/metaphlan_results/C5.profile.txt"
+OUT_DIR="$PROYECTO/humann_results/C5"
+
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+export PATH="$PROYECTO/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# 22.2. Comprobar procesos y archivos de entrada.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+for ARCHIVO in \
+    "$READ_DIR/C5_R1.fq.gz" \
+    "$READ_DIR/C5_R2.fq.gz" \
+    "$PROFILE"; do
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: archivo ausente o vacío: $ARCHIVO"
+        exit 1
+    }
+done
+
+# Evitar mezclar esta primera ejecución con intentos anteriores.
+
+[[ ! -e "$OUT_DIR" ]] || {
+    echo "ERROR: ya existe $OUT_DIR. Revisar antes de continuar."
+    exit 1
+}
+
+humann --version
+metaphlan --version
+
+# 22.3. Preparar la entrada conjunta.
+## La concatenación conserva ambos extremos como lecturas individuales.
+## No modifica los archivos originales.
+
+mkdir -p "$INPUT_DIR"
+
+if [[ -e "$INPUT" ]]; then
+    echo "Comprobando la entrada conjunta existente..."
+    gzip -t "$INPUT"
+else
+    PARCIAL="$INPUT_DIR/C5.${RUN_ID}.partial.gz"
+
+    cat "$READ_DIR/C5_R1.fq.gz" \
+        "$READ_DIR/C5_R2.fq.gz" > "$PARCIAL"
+
+    gzip -t "$PARCIAL"
+    mv "$PARCIAL" "$INPUT"
+fi
+
+mkdir -p "$OUT_DIR"
+
+# 22.4. Ejecutar HUMAnN sin la búsqueda traducida.
+## Las tablas de esta ejecución NO son los resultados finales de C5.
+
+/usr/bin/time -l humann \
+    --input "$INPUT" \
+    --output "$OUT_DIR" \
+    --output-basename C5 \
+    --threads 12 \
+    --search-mode uniref50 \
+    --taxonomic-profile "$PROFILE" \
+    --nucleotide-database "$DB_ROOT/chocophlan" \
+    --protein-database "$DB_ROOT/uniref" \
+    --bypass-translated-search \
+    2>&1 | tee "$OUT_DIR/C5.nucleotide_${RUN_ID}.console.log"
+
+# 22.5. Comprobar los archivos necesarios para continuar.
+
+TEMP_DIR="$OUT_DIR/C5_humann_temp"
+
+for ARCHIVO in \
+    "$TEMP_DIR/C5_bowtie2_aligned.tsv" \
+    "$TEMP_DIR/C5_bowtie2_unaligned.fa"; do
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: archivo ausente o vacío: $ARCHIVO"
+        exit 1
+    }
+
+    ls -lh "$ARCHIVO"
+done
+
+# Separar las tablas provisionales para evitar confundirlas
+## con los resultados finales que generaremos tras DIAMOND.
+
+PRELIMINAR="$OUT_DIR/nucleotide_only_${RUN_ID}"
+mkdir -p "$PRELIMINAR"
+
+for TABLA in genefamilies pathabundance pathcoverage; do
+    ARCHIVO="$OUT_DIR/C5_${TABLA}.tsv"
+    if [[ -f "$ARCHIVO" ]]; then
+        mv "$ARCHIVO" "$PRELIMINAR/"
+    fi
+done
+
+cp "$TEMP_DIR/C5.log" "$PRELIMINAR/C5.nucleotide.log"
+
+echo "ETAPA NUCLEOTÍDICA DE C5 COMPLETADA."
+echo "Tablas provisionales: $PRELIMINAR"
+echo "Lecturas para fragmentar: $TEMP_DIR/C5_bowtie2_unaligned.fa"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
+
 
 
