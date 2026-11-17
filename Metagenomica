@@ -1491,4 +1491,138 @@ df -h "$PROYECTO" /System/Volumes/Data
 ZSH
 
 
+# 23. Prueba de DIAMOND para C5.
+## Procesar únicamente los primeros dos millones de lecturas.
+## Mantener sensibilidad, base y controles de memoria usados en C4.
+## Esta prueba será reutilizable si continuamos con este esquema.
 
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+FASTA="$PROYECTO/humann_results/C5/C5_humann_temp/C5_bowtie2_unaligned.fa"
+
+CHUNKS="$PROYECTO/diamond_chunks/C5"
+RESULTADOS="$PROYECTO/diamond_chunk_results/C5"
+
+DB="/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref/uniref50_201901b_full.dmnd"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# 23.1. Verificar entradas y evitar ejecuciones simultáneas.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+[[ -s "$FASTA" && -s "$DB" ]] || {
+    echo "ERROR: falta el FASTA o la base de datos."
+    exit 1
+}
+
+[[ ! -e "$CHUNKS" && ! -e "$RESULTADOS" ]] || {
+    echo "ERROR: ya existen carpetas de fragmentos o resultados de C5."
+    echo "Revisar antes de repetir."
+    exit 1
+}
+
+mkdir -p "$CHUNKS"
+mkdir -p "$RESULTADOS"/{alignments,logs,tmp,completed}
+
+# 23.2. Extraer el primer fragmento sin cargar el FASTA en RAM.
+## No modificar identificadores ni secuencias.
+## El archivo original permanece intacto.
+
+python - <<'PY'
+from pathlib import Path
+
+proyecto = Path("/Volumes/Respaldo/secuencias/Christopher")
+origen = proyecto / "humann_results/C5/C5_humann_temp/C5_bowtie2_unaligned.fa"
+destino = proyecto / "diamond_chunks/C5/C5.part_0001.fa"
+parcial = destino.with_suffix(".fa.partial")
+
+limite = 2_000_000
+cantidad = 0
+
+with origen.open("rb") as entrada, parcial.open("xb") as salida:
+    for linea in entrada:
+        if linea.startswith(b">"):
+            if cantidad == limite:
+                break
+            cantidad += 1
+        elif cantidad == 0:
+            raise ValueError("El archivo no comienza con un encabezado FASTA.")
+
+        salida.write(linea)
+
+if cantidad != limite:
+    raise SystemExit(
+        f"ERROR: se esperaban {limite:,} lecturas; se encontraron {cantidad:,}."
+    )
+
+parcial.rename(destino)
+print(f"Fragmento preparado: {cantidad:,} lecturas")
+print(f"Archivo: {destino}")
+PY
+
+# 23.3. Registrar versión y parámetros de la prueba.
+
+diamond version > "$RESULTADOS/diamond_version.txt"
+
+{
+    echo "database=$DB"
+    echo "threads=12"
+    echo "reads_per_chunk=2000000"
+    echo "options=--evalue 1.0 --top 1 --sensitive --block-size 0.25 --index-chunks 8 --outfmt 6"
+} > "$RESULTADOS/C5.pilot_parameters.txt"
+
+NOMBRE="C5.part_0001"
+PARCIAL="$RESULTADOS/alignments/${NOMBRE}.${RUN_ID}.partial"
+SALIDA="$RESULTADOS/alignments/${NOMBRE}.m8"
+LOG="$RESULTADOS/logs/${NOMBRE}.${RUN_ID}.log"
+TMP="$RESULTADOS/tmp/${NOMBRE}.${RUN_ID}"
+
+mkdir -p "$TMP"
+
+echo "Iniciando prueba de C5: $(date)"
+echo "Dos millones de lecturas; 12 hilos."
+
+# 23.4. Ejecutar únicamente este fragmento.
+
+/usr/bin/time -l diamond blastx \
+    --query "$CHUNKS/${NOMBRE}.fa" \
+    --db "$DB" \
+    --out "$PARCIAL" \
+    --outfmt 6 \
+    --evalue 1.0 \
+    --threads 12 \
+    --top 1 \
+    --sensitive \
+    --block-size 0.25 \
+    --index-chunks 8 \
+    --tmpdir "$TMP" \
+    > "$LOG" 2>&1
+
+# Comprobar formato; una salida vacía puede ser válida.
+
+awk -F '\t' '
+    NF != 12 {fallo=1; exit}
+    END {exit fallo}
+' "$PARCIAL"
+
+mv "$PARCIAL" "$SALIDA"
+
+{
+    echo "fragmento=${NOMBRE}.fa"
+    echo "lecturas=2000000"
+    echo "finalizado=$(date)"
+} > "$RESULTADOS/completed/${NOMBRE}.done"
+
+echo "PRUEBA COMPLETADA: $(date)"
+tail -n 30 "$LOG"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
