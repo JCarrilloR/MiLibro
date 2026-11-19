@@ -1877,3 +1877,91 @@ echo "Registros: $RESULTADOS/logs"
 df -h "$PROYECTO" /System/Volumes/Data
 ZSH
 
+
+# 26. Completar el análisis funcional de C5.
+## Reutilizar los alineamientos nucleotídicos y traducidos.
+## No incluir --bypass-translated-search en esta ejecución.
+## Las tablas finales integrarán ambas búsquedas.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+# 26.1. Definir rutas.
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+
+INPUT="$PROYECTO/humann_inputs/C5.fastq.gz"
+PROFILE="$PROYECTO/metaphlan_results/C5.profile.txt"
+OUT_DIR="$PROYECTO/humann_results/C5"
+TEMP_DIR="$OUT_DIR/C5_humann_temp"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# Utilizar el wrapper de MetaPhlAn validado.
+
+export PATH="$PROYECTO/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# 26.2. Evitar ejecuciones simultáneas.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+# Comprobar entradas y alineamientos.
+
+for ARCHIVO in \
+    "$INPUT" \
+    "$PROFILE" \
+    "$TEMP_DIR/C5_bowtie2_aligned.tsv" \
+    "$TEMP_DIR/C5_bowtie2_unaligned.fa" \
+    "$TEMP_DIR/C5_diamond_aligned.tsv" \
+    "$PROYECTO/diamond_chunk_results/C5/C5_merge_verification.txt"; do
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: archivo ausente o vacío: $ARCHIVO"
+        exit 1
+    }
+done
+
+# Conservar el registro anterior.
+
+cp "$TEMP_DIR/C5.log" \
+   "$OUT_DIR/C5.before_postprocessing_${RUN_ID}.log"
+
+# 26.3. Retomar HUMAnN.
+## --resume debe reutilizar el alineamiento combinado de DIAMOND.
+## Mantener sus parámetros por trazabilidad.
+
+/usr/bin/time -l humann \
+    --input "$INPUT" \
+    --output "$OUT_DIR" \
+    --output-basename C5 \
+    --threads 12 \
+    --resume \
+    --search-mode uniref50 \
+    --taxonomic-profile "$PROFILE" \
+    --nucleotide-database "$DB_ROOT/chocophlan" \
+    --protein-database "$DB_ROOT/uniref" \
+    --diamond-options="--top 1 --sensitive --block-size 0.25 --index-chunks 8 --outfmt 6" \
+    2>&1 | tee "$OUT_DIR/C5.postprocessing_${RUN_ID}.console.log"
+
+# 26.4. Verificar las tres tablas finales.
+
+for TABLA in genefamilies pathabundance pathcoverage; do
+    ARCHIVO="$OUT_DIR/C5_${TABLA}.tsv"
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: falta la tabla final: $ARCHIVO"
+        exit 1
+    }
+
+    ls -lh "$ARCHIVO"
+done
+
+echo "HUMAnN completado para C5."
+ZSH
