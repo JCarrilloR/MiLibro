@@ -2091,4 +2091,153 @@ echo "Lecturas para fragmentar: $TEMP_DIR/C6_bowtie2_unaligned.fa"
 df -h "$PROYECTO" /System/Volumes/Data
 ZSH
 
+# 30. Probar DIAMOND con cuatro millones de lecturas de C6.
+## Ejecutar un solo fragmento para medir tiempo y memoria.
+## Conservar su resultado para reutilizarlo después.
+## No modificar el FASTA original ni las tablas provisionales.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+# 30.1. Definir rutas.
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+FASTA="$PROYECTO/humann_results/C6/C6_humann_temp/C6_bowtie2_unaligned.fa"
+
+CHUNKS="$PROYECTO/diamond_chunks/C6"
+RESULTADOS="$PROYECTO/diamond_chunk_results/C6"
+
+DB="/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref/uniref50_201901b_full.dmnd"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# 30.2. Comprobar procesos y entradas.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+[[ -s "$FASTA" && -s "$DB" ]] || {
+    echo "ERROR: falta el FASTA o la base de datos."
+    exit 1
+}
+
+[[ ! -e "$CHUNKS" && ! -e "$RESULTADOS" ]] || {
+    echo "ERROR: ya existen carpetas de fragmentos o resultados de C6."
+    echo "Revisar antes de repetir."
+    exit 1
+}
+
+mkdir -p "$CHUNKS"
+mkdir -p "$RESULTADOS"/{alignments,logs,tmp,completed}
+
+# 30.3. Extraer el primer fragmento.
+## Leer secuencialmente, sin cargar todo el archivo en RAM.
+## Mantener intactos los identificadores y las secuencias.
+
+python - <<'PY'
+from pathlib import Path
+import hashlib
+
+proyecto = Path("/Volumes/Respaldo/secuencias/Christopher")
+origen = proyecto / "humann_results/C6/C6_humann_temp/C6_bowtie2_unaligned.fa"
+destino = proyecto / "diamond_chunks/C6/C6.part_0001.fa"
+parcial = destino.with_suffix(".fa.partial")
+
+limite = 4_000_000
+cantidad = 0
+sha = hashlib.sha256()
+
+with origen.open("rb") as entrada, parcial.open("xb") as salida:
+    for linea in entrada:
+        if linea.startswith(b">"):
+            if cantidad == limite:
+                break
+            cantidad += 1
+        elif cantidad == 0:
+            raise ValueError("El archivo no comienza con un encabezado FASTA.")
+
+        salida.write(linea)
+        sha.update(linea)
+
+if cantidad != limite:
+    raise SystemExit(
+        f"ERROR: se esperaban {limite:,} lecturas; se encontraron {cantidad:,}."
+    )
+
+parcial.rename(destino)
+
+destino.with_suffix(".sha256").write_text(
+    f"{sha.hexdigest()}  {destino.name}\n"
+)
+
+print(f"Fragmento preparado: {cantidad:,} lecturas")
+print(f"Tamaño: {destino.stat().st_size / 1024**3:.2f} GiB")
+print(f"Archivo: {destino}")
+PY
+
+# 30.4. Registrar parámetros y versión.
+
+diamond version > "$RESULTADOS/diamond_version.txt"
+
+{
+    echo "database=$DB"
+    echo "threads=12"
+    echo "reads_per_chunk=4000000"
+    echo "options=--evalue 1.0 --top 1 --sensitive --block-size 0.25 --index-chunks 8 --outfmt 6"
+} > "$RESULTADOS/C6.pilot_parameters.txt"
+
+NOMBRE="C6.part_0001"
+PARCIAL="$RESULTADOS/alignments/${NOMBRE}.${RUN_ID}.partial"
+SALIDA="$RESULTADOS/alignments/${NOMBRE}.m8"
+LOG="$RESULTADOS/logs/${NOMBRE}.${RUN_ID}.log"
+TMP="$RESULTADOS/tmp/${NOMBRE}.${RUN_ID}"
+
+mkdir -p "$TMP"
+
+echo "Iniciando prueba de C6: $(date)"
+echo "Cuatro millones de lecturas; 12 hilos."
+echo "Registro: $LOG"
+
+# 30.5. Ejecutar exclusivamente el primer fragmento.
+
+/usr/bin/time -l diamond blastx \
+    --query "$CHUNKS/${NOMBRE}.fa" \
+    --db "$DB" \
+    --out "$PARCIAL" \
+    --outfmt 6 \
+    --evalue 1.0 \
+    --threads 12 \
+    --top 1 \
+    --sensitive \
+    --block-size 0.25 \
+    --index-chunks 8 \
+    --tmpdir "$TMP" \
+    > "$LOG" 2>&1
+
+# Validar las 12 columnas.
+## Una salida vacía puede ser válida si DIAMOND finalizó correctamente.
+
+awk -F '\t' '
+    NF != 12 {fallo=1; exit}
+    END {exit fallo}
+' "$PARCIAL"
+
+mv "$PARCIAL" "$SALIDA"
+
+{
+    echo "fragmento=${NOMBRE}.fa"
+    echo "lecturas=4000000"
+    echo "finalizado=$(date)"
+} > "$RESULTADOS/completed/${NOMBRE}.done"
+
+echo "PRUEBA DE C6 COMPLETADA: $(date)"
+tail -n 30 "$LOG"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
+
 
