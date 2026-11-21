@@ -2240,4 +2240,278 @@ tail -n 30 "$LOG"
 df -h "$PROYECTO" /System/Volumes/Data
 ZSH
 
+# 31. Completar DIAMOND por fragmentos para C6.
+## Verificar y conservar el primer fragmento.
+## Preparar el resto sin cargar todo el FASTA en memoria.
+## Omitir las búsquedas terminadas que tengan marca .done.
+## No ejecutar todavía el procesamiento final de HUMAnN.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+CHUNKS="$PROYECTO/diamond_chunks/C6"
+RESULTADOS="$PROYECTO/diamond_chunk_results/C6"
+DB="/Users/bio2/miniconda/envs/humannpip/share/humann_databases/uniref/uniref50_201901b_full.dmnd"
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+
+# 31.1. Verificar procesos y parámetros antes de preparar archivos.
+
+if pgrep -x diamond >/dev/null ||
+   pgrep -f '/humannpip/bin/humann' >/dev/null; then
+    echo "ERROR: hay un análisis activo de DIAMOND o HUMAnN."
+    exit 1
+fi
+
+[[ -s "$DB" ]] || {
+    echo "ERROR: falta la base UniRef50."
+    exit 1
+}
+
+EXPECTED="$(printf '%s\n' \
+    "database=$DB" \
+    "threads=12" \
+    "reads_per_chunk=4000000" \
+    "options=--evalue 1.0 --top 1 --sensitive --block-size 0.25 --index-chunks 8 --outfmt 6")"
+
+[[ -s "$RESULTADOS/C6.pilot_parameters.txt" ]] || {
+    echo "ERROR: falta el registro de parámetros de la prueba."
+    exit 1
+}
+
+[[ "$(<"$RESULTADOS/C6.pilot_parameters.txt")" == "$EXPECTED" ]] || {
+    echo "ERROR: los parámetros no coinciden con la prueba."
+    exit 1
+}
+
+# 31.2. Preparar o verificar los fragmentos y su manifiesto.
+## SHA256 permite comprobar que los fragmentos no cambiaron.
+## Si existe una preparación incompleta, detenerse para revisarla.
+
+python - <<'PY'
+from pathlib import Path
+import csv
+import hashlib
+
+p = Path("/Volumes/Respaldo/secuencias/Christopher")
+original = p / "humann_results/C6/C6_humann_temp/C6_bowtie2_unaligned.fa"
+chunks = p / "diamond_chunks/C6"
+resultados = p / "diamond_chunk_results/C6"
+manifest = chunks / "manifest.tsv"
+primero = chunks / "C6.part_0001.fa"
+limite = 4_000_000
+
+def digest(ruta):
+    h = hashlib.sha256()
+    with ruta.open("rb") as archivo:
+        for bloque in iter(lambda: archivo.read(1024 * 1024), b""):
+            h.update(bloque)
+    return h.hexdigest()
+
+# Exigir el primer resultado y su marca.
+for ruta in (
+    primero,
+    resultados / "alignments/C6.part_0001.m8",
+    resultados / "completed/C6.part_0001.done",
+):
+    if not ruta.is_file():
+        raise SystemExit(f"ERROR: falta el archivo de la prueba: {ruta}")
+
+if manifest.exists():
+    with manifest.open(newline="") as archivo:
+        filas = list(csv.DictReader(archivo, delimiter="\t"))
+
+    if not filas:
+        raise SystemExit("ERROR: manifiesto vacío.")
+
+    for i, fila in enumerate(filas, 1):
+        if fila["archivo"] != f"C6.part_{i:04d}.fa":
+            raise SystemExit("ERROR: orden inesperado en el manifiesto.")
+
+        n = int(fila["lecturas"])
+        if not 0 < n <= limite or (i < len(filas) and n != limite):
+            raise SystemExit("ERROR: tamaño de fragmento inesperado.")
+
+        ruta = chunks / fila["archivo"]
+        if not ruta.is_file() or digest(ruta) != fila["sha256"]:
+            raise SystemExit(f"ERROR: fragmento ausente o modificado: {ruta}")
+
+    print(f"Manifiesto verificado: {len(filas)} fragmentos.", flush=True)
+    print(
+        f"Lecturas distribuidas: {sum(int(f['lecturas']) for f in filas):,}",
+        flush=True,
+    )
+
+else:
+    if not original.is_file() or original.stat().st_size == 0:
+        raise SystemExit("ERROR: falta el FASTA original.")
+
+    staging = chunks / "preparacion_restantes"
+    pendiente = chunks / "manifest.tsv.partial"
+
+    if staging.exists() or pendiente.exists():
+        raise SystemExit(
+            "ERROR: existe una preparación incompleta; revisar antes de repetir."
+        )
+
+    if any(r.name != primero.name for r in chunks.glob("C6.part_*.fa")):
+        raise SystemExit("ERROR: hay fragmentos adicionales sin manifiesto.")
+
+    staging.mkdir()
+    filas = []
+    archivo = None
+    h = None
+    total = 0
+    cantidad = 0
+    parte = 0
+
+    try:
+        with original.open("rb") as entrada:
+            for linea in entrada:
+                if linea.startswith(b">"):
+                    if total % limite == 0:
+                        if h is not None:
+                            if archivo is not None:
+                                archivo.close()
+                            filas.append((nombre, cantidad, h.hexdigest()))
+
+                        parte += 1
+                        nombre = f"C6.part_{parte:04d}.fa"
+                        cantidad = 0
+                        h = hashlib.sha256()
+                        archivo = (
+                            None if parte == 1
+                            else (staging / nombre).open("xb")
+                        )
+
+                    total += 1
+                    cantidad += 1
+
+                elif h is None:
+                    raise ValueError("El FASTA no comienza con un encabezado.")
+
+                h.update(linea)
+                if archivo is not None:
+                    archivo.write(linea)
+
+        if h is not None:
+            if archivo is not None:
+                archivo.close()
+            filas.append((nombre, cantidad, h.hexdigest()))
+
+    finally:
+        if archivo is not None and not archivo.closed:
+            archivo.close()
+
+    if not filas or filas[0][1] != limite:
+        raise SystemExit("ERROR: tamaño inesperado del primer fragmento.")
+
+    if filas[0][2] != digest(primero):
+        raise SystemExit(
+            "ERROR: el primer fragmento no coincide con el FASTA original."
+        )
+
+    for nombre, _, _ in filas[1:]:
+        destino = chunks / nombre
+        if destino.exists():
+            raise SystemExit(f"ERROR: ya existe {destino}")
+        (staging / nombre).rename(destino)
+
+    with pendiente.open("x", newline="") as archivo:
+        escritor = csv.writer(
+            archivo, delimiter="\t", lineterminator="\n"
+        )
+        escritor.writerow(["archivo", "lecturas", "sha256"])
+        escritor.writerows(filas)
+
+    pendiente.rename(manifest)
+    staging.rmdir()
+
+    print(f"Fragmentos preparados: {len(filas)}", flush=True)
+    print(f"Lecturas distribuidas: {total:,}", flush=True)
+    print("Primer fragmento verificado y conservado.", flush=True)
+PY
+
+# 31.3. Ejecutar los fragmentos pendientes, uno a la vez.
+
+TOTAL=$(awk 'END {print NR-1}' "$CHUNKS/manifest.tsv")
+CONTADOR=0
+
+while IFS=$'\t' read -r ARCHIVO LECTURAS SHA256; do
+    [[ "$ARCHIVO" == "archivo" ]] && continue
+
+    CONTADOR=$((CONTADOR + 1))
+    NOMBRE="${ARCHIVO%.fa}"
+    SALIDA="$RESULTADOS/alignments/${NOMBRE}.m8"
+    DONE="$RESULTADOS/completed/${NOMBRE}.done"
+
+    # Reutilizar exclusivamente resultados con marca de finalización.
+
+    if [[ -f "$DONE" ]]; then
+        [[ -f "$SALIDA" ]] || {
+            echo "ERROR: existe .done pero falta $SALIDA"
+            exit 1
+        }
+
+        grep -Fxq "fragmento=$ARCHIVO" "$DONE"
+        grep -Fxq "lecturas=$LECTURAS" "$DONE"
+
+        echo "Conservado [$CONTADOR/$TOTAL]: $NOMBRE"
+        continue
+    fi
+
+    [[ ! -e "$SALIDA" ]] || {
+        echo "ERROR: resultado sin marca .done: $SALIDA"
+        exit 1
+    }
+
+    PARCIAL="$RESULTADOS/alignments/${NOMBRE}.${RUN_ID}.partial"
+    LOG="$RESULTADOS/logs/${NOMBRE}.${RUN_ID}.log"
+    TMP="$RESULTADOS/tmp/${NOMBRE}.${RUN_ID}"
+    mkdir -p "$TMP"
+
+    echo "Iniciando [$CONTADOR/$TOTAL]: $NOMBRE — $(date)"
+    echo "Lecturas: $LECTURAS"
+
+    /usr/bin/time -l diamond blastx \
+        --query "$CHUNKS/$ARCHIVO" \
+        --db "$DB" \
+        --out "$PARCIAL" \
+        --outfmt 6 \
+        --evalue 1.0 \
+        --threads 12 \
+        --top 1 \
+        --sensitive \
+        --block-size 0.25 \
+        --index-chunks 8 \
+        --tmpdir "$TMP" \
+        > "$LOG" 2>&1
+
+    # Validar formato; aceptar un resultado vacío si terminó sin error.
+
+    awk -F '\t' '
+        NF != 12 {fallo=1; exit}
+        END {exit fallo}
+    ' "$PARCIAL"
+
+    mv "$PARCIAL" "$SALIDA"
+
+    {
+        echo "fragmento=$ARCHIVO"
+        echo "lecturas=$LECTURAS"
+        echo "finalizado=$(date)"
+    } > "$DONE"
+
+    echo "Completado [$CONTADOR/$TOTAL]: $NOMBRE — $(date)"
+
+done < "$CHUNKS/manifest.tsv"
+
+echo "DIAMOND completado para todos los fragmentos de C6."
+echo "Alineamientos: $RESULTADOS/alignments"
+echo "Registros: $RESULTADOS/logs"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
 
