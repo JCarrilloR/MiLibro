@@ -2514,4 +2514,921 @@ echo "Registros: $RESULTADOS/logs"
 
 df -h "$PROYECTO" /System/Volumes/Data
 ZSH
+# 32. Verificar y unir los alineamientos de C6.
+## Comprobar el manifiesto, las marcas de finalización
+## y las 12 columnas de cada archivo de alineamientos.
+## Los fragmentos se unirán en el orden del manifiesto.
+## No se eliminarán archivos individuales.
 
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+python - <<'PY'
+from pathlib import Path
+import csv
+import hashlib
+import os
+import shutil
+from datetime import datetime
+
+# 32.1. Definir las rutas.
+
+proyecto = Path("/Volumes/Respaldo/secuencias/Christopher")
+fragmentos = proyecto / "diamond_chunks/C6"
+resultados = proyecto / "diamond_chunk_results/C6"
+manifiesto = fragmentos / "manifest.tsv"
+
+destino = (
+    proyecto / "humann_results/C6/C6_humann_temp"
+    / "C6_diamond_aligned.tsv"
+)
+parcial = destino.with_name(destino.name + ".partial")
+reporte = resultados / "C6_merge_verification.txt"
+
+# 32.2. Comprobar las entradas y evitar sobrescrituras.
+
+if not manifiesto.is_file():
+    raise SystemExit(f"ERROR: falta el manifiesto: {manifiesto}")
+
+if not destino.parent.is_dir():
+    raise SystemExit(f"ERROR: falta la carpeta: {destino.parent}")
+
+for archivo in (destino, parcial, reporte):
+    if archivo.exists():
+        raise SystemExit(
+            f"ERROR: ya existe {archivo}. Revisar antes de repetir."
+        )
+
+with manifiesto.open(newline="") as entrada:
+    lector = csv.DictReader(entrada, delimiter="\t")
+    if lector.fieldnames != ["archivo", "lecturas", "sha256"]:
+        raise SystemExit("ERROR: encabezado inesperado del manifiesto.")
+    filas = list(lector)
+
+if len(filas) != 24:
+    raise SystemExit(f"ERROR: se esperaban 24 fragmentos; hay {len(filas)}.")
+
+def sha256(archivo):
+    resumen = hashlib.sha256()
+    with archivo.open("rb") as entrada:
+        for bloque in iter(lambda: entrada.read(1024 * 1024), b""):
+            resumen.update(bloque)
+    return resumen.hexdigest()
+
+entradas = []
+total_lecturas = 0
+
+# 32.3. Verificar cada fragmento y su marca de finalización.
+## El SHA256 comprueba que el FASTA conserva el contenido
+## registrado durante su preparación.
+
+for indice, fila in enumerate(filas, start=1):
+    nombre = f"C6.part_{indice:04d}"
+    esperado = f"{nombre}.fa"
+    lecturas_esperadas = 4_000_000 if indice < 24 else 3_498_171
+
+    if fila["archivo"] != esperado:
+        raise SystemExit(f"ERROR: orden o nombre inesperado: {fila}")
+
+    if int(fila["lecturas"]) != lecturas_esperadas:
+        raise SystemExit(f"ERROR: número de lecturas inesperado: {nombre}")
+
+    fasta = fragmentos / esperado
+    alineamiento = resultados / "alignments" / f"{nombre}.m8"
+    marca = resultados / "completed" / f"{nombre}.done"
+
+    for archivo in (fasta, alineamiento, marca):
+        if not archivo.is_file():
+            raise SystemExit(f"ERROR: falta {archivo}")
+
+    if sha256(fasta) != fila["sha256"]:
+        raise SystemExit(f"ERROR: SHA256 distinto para {fasta}")
+
+    datos = dict(
+        linea.split("=", 1)
+        for linea in marca.read_text().splitlines()
+        if "=" in linea
+    )
+    if (
+        datos.get("fragmento") != esperado
+        or datos.get("lecturas") != str(lecturas_esperadas)
+        or not datos.get("finalizado")
+    ):
+        raise SystemExit(f"ERROR: marca de finalización inconsistente: {marca}")
+
+    entradas.append(alineamiento)
+    total_lecturas += lecturas_esperadas
+
+if total_lecturas != 95_498_171:
+    raise SystemExit("ERROR: el total de lecturas no coincide.")
+
+# Comprobar que hay espacio para una copia combinada.
+## Se reserva además un margen de 5 GiB.
+
+tamano_esperado = sum(archivo.stat().st_size for archivo in entradas)
+libre = shutil.disk_usage(destino.parent).free
+
+if libre < tamano_esperado + 5 * 1024**3:
+    raise SystemExit("ERROR: espacio insuficiente para realizar la unión.")
+
+# 32.4. Validar y unir sin cargar los archivos completos en RAM.
+## Una salida vacía puede ser válida si su ejecución terminó.
+## Cada fila presente debe tener 12 columnas y terminar en salto de línea.
+
+total_filas = 0
+resumen_combinado = hashlib.sha256()
+detalle = []
+
+with parcial.open("xb") as salida:
+    for archivo in entradas:
+        filas_archivo = 0
+        resumen_archivo = hashlib.sha256()
+
+        with archivo.open("rb") as entrada:
+            for numero, linea in enumerate(entrada, start=1):
+                if (
+                    not linea.endswith(b"\n")
+                    or len(linea.rstrip(b"\r\n").split(b"\t")) != 12
+                ):
+                    raise SystemExit(
+                        f"ERROR: fila inválida en {archivo}, línea {numero}. "
+                        "Se conserva el archivo parcial para revisión."
+                    )
+
+                salida.write(linea)
+                resumen_archivo.update(linea)
+                resumen_combinado.update(linea)
+                filas_archivo += 1
+
+        total_filas += filas_archivo
+        detalle.append(
+            f"{archivo.name}\t{filas_archivo}\t"
+            f"{resumen_archivo.hexdigest()}"
+        )
+        print(f"Verificado y unido: {archivo.name}", flush=True)
+
+    salida.flush()
+    os.fsync(salida.fileno())
+
+if parcial.stat().st_size != tamano_esperado:
+    raise SystemExit("ERROR: tamaño combinado inesperado.")
+
+# 32.5. Publicar el archivo y guardar la auditoría.
+
+parcial.rename(destino)
+
+texto = [
+    f"Fecha: {datetime.now().isoformat(timespec='seconds')}",
+    "Muestra: C6",
+    f"Fragmentos: {len(entradas)}",
+    f"Lecturas de entrada: {total_lecturas}",
+    f"Filas de alineamientos: {total_filas}",
+    f"Tamaño en bytes: {destino.stat().st_size}",
+    f"SHA256 combinado: {resumen_combinado.hexdigest()}",
+    f"Archivo: {destino}",
+    "",
+    "Archivo\tFilas\tSHA256",
+    *detalle,
+]
+with reporte.open("x") as salida:
+    salida.write("\n".join(texto) + "\n")
+
+print("\nVERIFICACIÓN Y UNIÓN COMPLETADAS")
+print(f"Fragmentos: {len(entradas)}")
+print(f"Lecturas de entrada: {total_lecturas:,}")
+print(f"Filas de alineamientos: {total_filas:,}")
+print(f"Tamaño combinado: {destino.stat().st_size / 1024**3:.2f} GiB")
+print(f"Archivo: {destino}")
+print(f"Registro: {reporte}")
+PY
+
+df -h "/Volumes/Respaldo" /System/Volumes/Data
+ZSH
+
+# 33. Finalizar el análisis funcional de C6 con HUMAnN.
+## --resume permitirá reutilizar los alineamientos existentes.
+## No se utilizará --bypass-translated-search:
+## necesitamos que HUMAnN procese los resultados de DIAMOND.
+## Las abundancias describen potencial funcional del metagenoma.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+# 33.1. Definir rutas y recursos.
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+
+INPUT="$PROYECTO/humann_inputs/C6.fastq.gz"
+PROFILE="$PROYECTO/metaphlan_results/C6.profile.txt"
+OUT_DIR="$PROYECTO/humann_results/C6"
+TEMP_DIR="$OUT_DIR/C6_humann_temp"
+REPORTE="$PROYECTO/diamond_chunk_results/C6/C6_merge_verification.txt"
+
+THREADS=12
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+LOG="$OUT_DIR/C6.final_${RUN_ID}.console.log"
+
+# Utilizar el wrapper de MetaPhlAn que resolvió
+# la comprobación de versión desde HUMAnN.
+
+export PATH="$PROYECTO/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# 33.2. Comprobar programas y archivos necesarios.
+
+command -v humann
+humann --version
+
+command -v metaphlan
+metaphlan --version
+
+for ARCHIVO in \
+    "$INPUT" \
+    "$PROFILE" \
+    "$REPORTE" \
+    "$TEMP_DIR/C6_bowtie2_aligned.tsv" \
+    "$TEMP_DIR/C6_bowtie2_unaligned.fa" \
+    "$TEMP_DIR/C6_diamond_aligned.tsv"; do
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: archivo ausente o vacío: $ARCHIVO"
+        exit 1
+    }
+done
+
+# Evitar sobrescribir tablas finales de una ejecución anterior.
+## Las tablas provisionales nucleotídicas ya se separaron
+## en la carpeta nucleotide_only correspondiente.
+
+for TABLA in genefamilies pathabundance pathcoverage; do
+    ARCHIVO="$OUT_DIR/C6_${TABLA}.tsv"
+
+    if [[ -e "$ARCHIVO" ]]; then
+        echo "ERROR: ya existe $ARCHIVO. Revisar antes de continuar."
+        exit 1
+    fi
+done
+
+# Conservar el registro interno anterior antes de retomarlo.
+
+if [[ -f "$TEMP_DIR/C6.log" ]]; then
+    cp -p "$TEMP_DIR/C6.log" \
+        "$OUT_DIR/C6.before_final_${RUN_ID}.log"
+fi
+
+# 33.3. Retomar HUMAnN.
+## El archivo C6_diamond_aligned.tsv ya está preparado.
+## En la etapa de DIAMOND esperamos ver:
+## Running diamond ........
+## Bypass
+## Después HUMAnN procesará los alineamientos,
+## calculará familias génicas y reconstruirá rutas.
+
+echo "Iniciando procesamiento final de C6: $(date)"
+
+/usr/bin/time -l humann \
+    --input "$INPUT" \
+    --output "$OUT_DIR" \
+    --output-basename C6 \
+    --threads "$THREADS" \
+    --resume \
+    --search-mode uniref50 \
+    --taxonomic-profile "$PROFILE" \
+    --nucleotide-database "$DB_ROOT/chocophlan" \
+    --protein-database "$DB_ROOT/uniref" \
+    2>&1 | tee "$LOG"
+
+# 33.4. Comprobar las tres tablas finales.
+## Esta comprobación confirma que existen y contienen datos.
+## La revisión integral de sus contenidos se hará posteriormente.
+
+for TABLA in genefamilies pathabundance pathcoverage; do
+    ARCHIVO="$OUT_DIR/C6_${TABLA}.tsv"
+
+    [[ -s "$ARCHIVO" ]] || {
+        echo "ERROR: falta la tabla final: $ARCHIVO"
+        exit 1
+    }
+
+    ls -lh "$ARCHIVO"
+done
+
+echo "HUMAnN completado para C6: $(date)"
+echo "Registro de consola: $LOG"
+
+df -h "$PROYECTO" /System/Volumes/Data
+ZSH
+
+# 34. Comprobar las entradas de C7 y C8.
+## Revisar las lecturas limpias, los perfiles taxonómicos
+## y cualquier resultado previo.
+## Comprobar los archivos gzip sin descomprimirlos en el disco.
+## No iniciar todavía HUMAnN ni modificar resultados.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+DB_ROOT="/Users/bio2/miniconda/envs/humannpip/share/humann_databases"
+
+export PATH="$PROYECTO/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# 34.1. Comprobar los programas.
+
+for PROGRAMA in humann metaphlan diamond bowtie2; do
+    command -v "$PROGRAMA"
+done
+
+humann --version
+metaphlan --version
+diamond --version
+
+# 34.2. Comprobar que no hay otro análisis activo.
+## Detener esta revisión si encontramos HUMAnN o DIAMOND.
+
+if pgrep -x diamond; then
+    echo "ERROR: DIAMOND está activo. Revisar antes de continuar."
+    exit 1
+fi
+
+if pgrep -f '/humannpip/bin/humann'; then
+    echo "ERROR: HUMAnN está activo. Revisar antes de continuar."
+    exit 1
+fi
+
+# 34.3. Revisar las bases de datos.
+## Esta comprobación confirma su presencia;
+## no constituye una verificación completa de su integridad.
+
+[[ -d "$DB_ROOT/chocophlan" ]] || {
+    echo "ERROR: falta la carpeta ChocoPhlAn."
+    exit 1
+}
+
+[[ -s "$DB_ROOT/uniref/uniref50_201901b_full.dmnd" ]] || {
+    echo "ERROR: falta la base UniRef50."
+    exit 1
+}
+
+# 34.4. Comprobar las lecturas y perfiles de ambas muestras.
+## gzip -t lee cada comprimido completo y verifica su integridad.
+## Puede tardar varios minutos.
+
+for MUESTRA in C7 C8; do
+    echo
+    echo "REVISANDO: $MUESTRA"
+
+    for EXTREMO in R1 R2; do
+        ARCHIVO="$PROYECTO/merged_reads/${MUESTRA}_${EXTREMO}.fq.gz"
+
+        [[ -s "$ARCHIVO" ]] || {
+            echo "ERROR: archivo ausente o vacío: $ARCHIVO"
+            exit 1
+        }
+
+        ls -lh "$ARCHIVO"
+        echo "Verificando gzip..."
+        gzip -t "$ARCHIVO"
+        echo "OK: ${ARCHIVO:t}"
+    done
+
+    PERFIL="$PROYECTO/metaphlan_results/${MUESTRA}.profile.txt"
+
+    [[ -s "$PERFIL" ]] || {
+        echo "ERROR: perfil ausente o vacío: $PERFIL"
+        exit 1
+    }
+
+    ls -lh "$PERFIL"
+    head -n 5 "$PERFIL"
+
+    # Revisar si ya existe una entrada conjunta.
+
+    ENTRADA="$PROYECTO/humann_inputs/${MUESTRA}.fastq.gz"
+
+    if [[ -e "$ENTRADA" ]]; then
+        echo "Entrada conjunta existente:"
+        ls -lh "$ENTRADA"
+        gzip -t "$ENTRADA"
+        echo "OK: entrada conjunta."
+    else
+        echo "Sin entrada conjunta previa."
+    fi
+
+    # Identificar preparaciones o resultados anteriores.
+    ## Su presencia debe considerarse antes de generar el script.
+
+    for CARPETA in \
+        "$PROYECTO/humann_results/$MUESTRA" \
+        "$PROYECTO/diamond_chunks/$MUESTRA" \
+        "$PROYECTO/diamond_chunk_results/$MUESTRA"; do
+
+        if [[ -d "$CARPETA" ]]; then
+            echo "Carpeta existente:"
+            du -sh "$CARPETA"
+
+            find "$CARPETA" -maxdepth 2 -type f \
+                \( -name '*.log' \
+                -o -name '*.done' \
+                -o -name '*parameters*' \
+                -o -name 'manifest.tsv' \
+                -o -name '*genefamilies.tsv' \
+                -o -name '*pathabundance.tsv' \
+                -o -name '*pathcoverage.tsv' \) \
+                -print
+        else
+            echo "Sin carpeta previa: $CARPETA"
+        fi
+    done
+done
+
+# 34.5. Consultar almacenamiento disponible.
+## Consideraremos el espacio para ambas muestras,
+## incluyendo fragmentos y alineamientos combinados.
+
+echo
+echo "ALMACENAMIENTO DISPONIBLE"
+df -h "$PROYECTO" /System/Volumes/Data
+
+echo
+echo "COMPROBACIÓN DE C7 Y C8 COMPLETADA."
+ZSH
+
+# 35. Ejecutar C7 y C8 de manera secuencial.
+## Para cada muestra:
+## 1. Preparar la entrada conjunta.
+## 2. Ejecutar la búsqueda nucleotídica.
+## 3. Fragmentar las lecturas restantes.
+## 4. Ejecutar DIAMOND por fragmentos.
+## 5. Verificar y unir alineamientos.
+## 6. Retomar HUMAnN y verificar las tablas finales.
+##
+## Se conservarán los archivos intermedios y los registros.
+## Cada fragmento terminado tendrá una marca de finalización.
+## Ante un error, C8 no comenzará hasta resolverlo.
+## Mantener esta terminal abierta durante la ejecución.
+
+conda activate humannpip
+
+caffeinate -i zsh <<'ZSH'
+set -euo pipefail
+
+PROYECTO="/Volumes/Respaldo/secuencias/Christopher"
+
+export PATH="$PROYECTO/bin_wrappers:/Users/bio2/miniconda/envs/humannpip/bin:/Users/bio2/miniconda/envs/meta4/bin:$PATH"
+rehash
+
+# Evitar ejecutar otro análisis simultáneamente.
+
+if pgrep -x diamond || pgrep -f '/humannpip/bin/humann'; then
+    echo "ERROR: ya existe un análisis activo."
+    exit 1
+fi
+
+python -u - <<'PY'
+from pathlib import Path
+from datetime import datetime
+import csv
+import hashlib
+import math
+import os
+import shutil
+import subprocess
+
+# 35.1. Configuración común.
+
+P = Path("/Volumes/Respaldo/secuencias/Christopher")
+DB = Path("/Users/bio2/miniconda/envs/humannpip/share/humann_databases")
+THREADS = 12
+LIMIT = 4_000_000
+GIB = 1024**3
+RUN = datetime.now().strftime("%Y%m%d_%H%M%S")
+TABLES = ("genefamilies", "pathabundance", "pathcoverage")
+
+def message(text):
+    print(f"\n{datetime.now():%Y-%m-%d %H:%M:%S} — {text}", flush=True)
+
+def require(path):
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"Archivo ausente o vacío: {path}")
+
+def space(minimum):
+    free = shutil.disk_usage(P).free / GIB
+    print(f"Espacio libre en Respaldo: {free:.1f} GiB", flush=True)
+    if free < minimum:
+        raise RuntimeError(
+            f"Espacio insuficiente: se requieren al menos {minimum:.1f} GiB "
+            "para continuar esta etapa. No se eliminó ningún archivo."
+        )
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+def run(command, log):
+    # Guardar el comando, sus mensajes y las métricas de /usr/bin/time.
+    print("Registro:", log, flush=True)
+    with log.open("x") as f:
+        f.write("Comando: " + repr(command) + "\n")
+        f.flush()
+        subprocess.run(
+            ["/usr/bin/time", "-l", *map(str, command)],
+            stdout=f, stderr=subprocess.STDOUT, check=True
+        )
+
+def atomic_text(path, text):
+    partial = path.with_name(path.name + ".partial")
+    with partial.open("x") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    partial.rename(path)
+
+def validate_tables(out, sample):
+    # Verificar tablas de una muestra: dos columnas,
+    # valores finitos y no negativos; cobertura entre cero y uno.
+    hashes = {}
+    for kind in TABLES:
+        path = out / f"{sample}_{kind}.tsv"
+        require(path)
+        count = 0
+        with path.open() as f:
+            for line in f:
+                if line.startswith("#") or not line.strip():
+                    continue
+                fields = line.rstrip("\r\n").split("\t")
+                if len(fields) != 2:
+                    raise RuntimeError(f"Fila inesperada en {path}")
+                value = float(fields[1])
+                if not math.isfinite(value) or value < 0:
+                    raise RuntimeError(f"Valor inválido en {path}")
+                if kind == "pathcoverage" and value > 1:
+                    raise RuntimeError(f"Cobertura mayor a uno en {path}")
+                count += 1
+        if count == 0:
+            raise RuntimeError(f"Tabla sin filas de datos: {path}")
+        hashes[path.name] = digest(path)
+        print(f"OK: {path.name}; {count:,} filas", flush=True)
+    return hashes
+
+for program in ("humann", "metaphlan", "diamond"):
+    if not shutil.which(program):
+        raise RuntimeError(f"No se encontró {program}")
+
+require(DB / "uniref/uniref50_201901b_full.dmnd")
+
+# 35.2. Procesar C7 y, después, C8.
+
+for sample in ("C7", "C8"):
+    message(f"PROCESANDO {sample}")
+
+    out = P / "humann_results" / sample
+    temp = out / f"{sample}_humann_temp"
+    chunks = P / "diamond_chunks" / sample
+    results = P / "diamond_chunk_results" / sample
+
+    for folder in (out, chunks, results):
+        folder.mkdir(parents=True, exist_ok=True)
+    for folder in ("alignments", "logs", "tmp", "completed"):
+        (results / folder).mkdir(exist_ok=True)
+
+    finished = results / f"{sample}.humann_completed.tsv"
+
+    # Si esta muestra ya terminó, comprobar sus tablas antes de omitirla.
+    if finished.exists():
+        recorded = dict(
+            line.split("\t") for line in finished.read_text().splitlines()
+        )
+        if validate_tables(out, sample) != recorded:
+            raise RuntimeError(f"Las tablas finales de {sample} cambiaron.")
+        message(f"{sample} ya estaba completada y verificada.")
+        continue
+
+    # Margen operativo, no una predicción exacta del consumo final.
+    space(120)
+
+    r1 = P / "merged_reads" / f"{sample}_R1.fq.gz"
+    r2 = P / "merged_reads" / f"{sample}_R2.fq.gz"
+    profile = P / "metaphlan_results" / f"{sample}.profile.txt"
+    for path in (r1, r2, profile):
+        require(path)
+
+    inputs = P / "humann_inputs"
+    inputs.mkdir(exist_ok=True)
+    joint = inputs / f"{sample}.fastq.gz"
+
+    # 35.3. Preparar la entrada conjunta.
+    ## La concatenación conserva ambos extremos.
+    ## No modifica las lecturas originales.
+
+    if not joint.exists():
+        partial = inputs / f"{sample}.fastq.gz.partial"
+        if partial.exists():
+            raise RuntimeError(f"Preparación interrumpida; revisar: {partial}")
+        message(f"Preparando entrada conjunta de {sample}")
+        with partial.open("xb") as dst:
+            for path in (r1, r2):
+                with path.open("rb") as src:
+                    shutil.copyfileobj(src, dst, 1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
+        subprocess.run(["gzip", "-t", str(partial)], check=True)
+        partial.rename(joint)
+    else:
+        require(joint)
+        subprocess.run(["gzip", "-t", str(joint)], check=True)
+
+    common = [
+        "humann",
+        "--input", joint,
+        "--output", out,
+        "--output-basename", sample,
+        "--threads", str(THREADS),
+        "--search-mode", "uniref50",
+        "--taxonomic-profile", profile,
+        "--nucleotide-database", DB / "chocophlan",
+        "--protein-database", DB / "uniref",
+    ]
+
+    # 35.4. Ejecutar únicamente la etapa nucleotídica.
+    ## Separar las tablas provisionales para que no se confundan
+    ## con las tablas finales que incorporarán DIAMOND.
+
+    nucleotide_done = results / f"{sample}.nucleotide.done"
+    unaligned = temp / f"{sample}_bowtie2_unaligned.fa"
+    nucleotide_aligned = temp / f"{sample}_bowtie2_aligned.tsv"
+
+    if not nucleotide_done.exists():
+        provisional = out / "nucleotide_only"
+        if provisional.exists():
+            raise RuntimeError(
+                f"Etapa nucleotídica sin marca final; revisar: {provisional}"
+            )
+        message(f"Etapa nucleotídica de {sample}")
+        run(
+            common + ["--resume", "--bypass-translated-search"],
+            out / f"{sample}.nucleotide_{RUN}.console.log"
+        )
+        require(unaligned)
+        require(nucleotide_aligned)
+        validate_tables(out, sample)
+
+        provisional.mkdir()
+        for kind in TABLES:
+            (out / f"{sample}_{kind}.tsv").rename(
+                provisional / f"{sample}_{kind}.tsv"
+            )
+        shutil.copy2(temp / f"{sample}.log",
+                     provisional / f"{sample}.nucleotide.log")
+        atomic_text(nucleotide_done, f"finalizado={datetime.now().isoformat()}\n")
+
+    require(unaligned)
+    require(nucleotide_aligned)
+
+    # 35.5. Fragmentar el FASTA en bloques de hasta cuatro millones.
+    ## El manifiesto registra nombre, lecturas y SHA256.
+    ## Una preparación interrumpida se conserva para revisión.
+
+    manifest = chunks / "manifest.tsv"
+
+    if not manifest.exists():
+        staging = chunks / "preparacion"
+        if staging.exists() or list(chunks.glob(f"{sample}.part_*.fa")):
+            raise RuntimeError(
+                f"Existe una preparación incompleta en {chunks}; revisar."
+            )
+        space(unaligned.stat().st_size / GIB + 40)
+        staging.mkdir()
+        records = []
+        handle = None
+        number = 0
+        count = 0
+        h = None
+
+        def close_chunk():
+            if handle is not None:
+                handle.flush()
+                os.fsync(handle.fileno())
+                handle.close()
+                records.append((name, count, h.hexdigest()))
+
+        message(f"Preparando fragmentos de {sample}")
+        try:
+            with unaligned.open("rb") as source:
+                for line in source:
+                    if line.startswith(b">"):
+                        if handle is None or count == LIMIT:
+                            close_chunk()
+                            number += 1
+                            name = f"{sample}.part_{number:04d}.fa"
+                            handle = (staging / name).open("xb")
+                            count = 0
+                            h = hashlib.sha256()
+                        count += 1
+                    elif handle is None:
+                        raise RuntimeError("FASTA sin encabezado inicial.")
+                    handle.write(line)
+                    h.update(line)
+            close_chunk()
+        finally:
+            if handle is not None and not handle.closed:
+                handle.close()
+
+        if not records:
+            raise RuntimeError("No se generaron fragmentos.")
+
+        for name, count, checksum in records:
+            (staging / name).rename(chunks / name)
+
+        atomic_text(
+            manifest,
+            "archivo\tlecturas\tsha256\n" +
+            "".join(f"{n}\t{c}\t{s}\n" for n, c, s in records)
+        )
+        staging.rmdir()
+
+    with manifest.open(newline="") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        if reader.fieldnames != ["archivo", "lecturas", "sha256"]:
+            raise RuntimeError("Encabezado inesperado del manifiesto.")
+        records = list(reader)
+
+    if not records:
+        raise RuntimeError("Manifiesto vacío.")
+
+    for index, row in enumerate(records, 1):
+        expected = f"{sample}.part_{index:04d}.fa"
+        count = int(row["lecturas"])
+        if row["archivo"] != expected or not 0 < count <= LIMIT:
+            raise RuntimeError("Nombre o conteo inesperado en manifiesto.")
+        if index < len(records) and count != LIMIT:
+            raise RuntimeError("Fragmento intermedio incompleto.")
+        if digest(chunks / expected) != row["sha256"]:
+            raise RuntimeError(f"SHA256 incorrecto: {expected}")
+
+    print(f"Fragmentos: {len(records)}", flush=True)
+    print(f"Lecturas: {sum(int(r['lecturas']) for r in records):,}", flush=True)
+
+    # 35.6. Ejecutar DIAMOND secuencialmente.
+    ## Mantener los parámetros utilizados en C6.
+    ## Las marcas guardan el SHA256 del resultado terminado.
+    ## Una repetición verifica y omite los fragmentos completados.
+
+    parameters = results / "parameters.txt"
+    settings = (
+        f"threads={THREADS}\nreads_per_chunk={LIMIT}\n"
+        f"database={DB / 'uniref/uniref50_201901b_full.dmnd'}\n"
+        "options=--evalue 1.0 --top 1 --sensitive "
+        "--block-size 0.25 --index-chunks 8 --outfmt 6\n"
+    )
+    if parameters.exists():
+        if parameters.read_text() != settings:
+            raise RuntimeError("Los parámetros existentes son distintos.")
+    else:
+        atomic_text(parameters, settings)
+
+    for index, row in enumerate(records, 1):
+        name = Path(row["archivo"]).stem
+        output = results / "alignments" / f"{name}.m8"
+        done = results / "completed" / f"{name}.done"
+
+        if done.exists():
+            data = dict(
+                line.split("=", 1) for line in done.read_text().splitlines()
+            )
+            if (
+                not output.is_file()
+                or data.get("input_sha256") != row["sha256"]
+                or data.get("output_sha256") != digest(output)
+            ):
+                raise RuntimeError(f"Resultado inconsistente: {name}")
+            message(f"Conservado [{index}/{len(records)}]: {name}")
+            continue
+
+        if output.exists():
+            raise RuntimeError(f"Resultado sin marca final; revisar: {output}")
+
+        space(30)
+        partial = output.with_name(output.name + f".{RUN}.partial")
+        scratch = results / "tmp" / f"{name}_{RUN}"
+        scratch.mkdir()
+        message(f"Iniciando [{index}/{len(records)}]: {name}")
+
+        run([
+            "diamond", "blastx",
+            "--query", chunks / row["archivo"],
+            "--db", DB / "uniref/uniref50_201901b_full.dmnd",
+            "--out", partial,
+            "--outfmt", "6",
+            "--evalue", "1.0",
+            "--threads", str(THREADS),
+            "--top", "1",
+            "--sensitive",
+            "--block-size", "0.25",
+            "--index-chunks", "8",
+            "--tmpdir", scratch,
+        ], results / "logs" / f"{name}.{RUN}.log")
+
+        with partial.open("rb") as f:
+            for line in f:
+                if not line.endswith(b"\n") or len(line.rstrip(b"\r\n").split(b"\t")) != 12:
+                    raise RuntimeError(f"Fila inválida en {partial}")
+
+        partial.rename(output)
+        atomic_text(done,
+            f"input_sha256={row['sha256']}\n"
+            f"output_sha256={digest(output)}\n"
+        )
+        message(f"Completado [{index}/{len(records)}]: {name}")
+
+    # 35.7. Verificar y unir los alineamientos.
+    ## No sumar tablas funcionales calculadas por fragmento:
+    ## HUMAnN procesará todos los alineamientos conjuntamente.
+
+    combined = temp / f"{sample}_diamond_aligned.tsv"
+    report = results / f"{sample}_merge_verification.txt"
+
+    if combined.exists() or report.exists():
+        if not combined.is_file() or not report.is_file():
+            raise RuntimeError("Unión incompleta; revisar archivo y reporte.")
+        data = dict(line.split("=", 1) for line in report.read_text().splitlines())
+        if data.get("sha256") != digest(combined):
+            raise RuntimeError("SHA256 incorrecto del archivo combinado.")
+    else:
+        files = [
+            results / "alignments" / (Path(r["archivo"]).stem + ".m8")
+            for r in records
+        ]
+        size = sum(f.stat().st_size for f in files)
+        space(size / GIB + 30)
+        partial = combined.with_name(combined.name + ".partial")
+        h = hashlib.sha256()
+        lines = 0
+
+        with partial.open("xb") as dst:
+            for row, path in zip(records, files):
+                name = path.stem
+                mark = results / "completed" / f"{name}.done"
+                data = dict(line.split("=", 1)
+                            for line in mark.read_text().splitlines())
+                part_hash = hashlib.sha256()
+                with path.open("rb") as src:
+                    for line in src:
+                        if not line.endswith(b"\n") or len(line.rstrip(b"\r\n").split(b"\t")) != 12:
+                            raise RuntimeError(f"Fila inválida en {path}")
+                        dst.write(line)
+                        part_hash.update(line)
+                        h.update(line)
+                        lines += 1
+                if part_hash.hexdigest() != data["output_sha256"]:
+                    raise RuntimeError(f"El alineamiento cambió: {path}")
+                print(f"Verificado y unido: {path.name}", flush=True)
+            dst.flush()
+            os.fsync(dst.fileno())
+
+        if partial.stat().st_size != size:
+            raise RuntimeError("Tamaño combinado inesperado.")
+        partial.rename(combined)
+        atomic_text(report,
+            f"fragmentos={len(records)}\n"
+            f"lecturas={sum(int(r['lecturas']) for r in records)}\n"
+            f"filas={lines}\nbytes={size}\nsha256={h.hexdigest()}\n"
+        )
+
+    # 35.8. Retomar HUMAnN con los alineamientos completos.
+    ## Esperamos "Running diamond" seguido de "Bypass".
+    ## HUMAnN aplicará sus filtros y calculará las tablas finales.
+
+    space(30)
+    if (temp / f"{sample}.log").exists():
+        shutil.copy2(temp / f"{sample}.log",
+                     out / f"{sample}.before_final_{RUN}.log")
+
+    message(f"Procesamiento final de HUMAnN: {sample}")
+    run(
+        common + ["--resume"],
+        out / f"{sample}.final_{RUN}.console.log"
+    )
+
+    hashes = validate_tables(out, sample)
+    atomic_text(
+        finished,
+        "".join(f"{name}\t{checksum}\n" for name, checksum in hashes.items())
+    )
+    message(f"HUMAnN COMPLETADO Y TABLAS VERIFICADAS: {sample}")
+
+message("C7 Y C8 COMPLETADAS")
+subprocess.run(["df", "-h", str(P), "/System/Volumes/Data"], check=True)
+PY
+ZSH
